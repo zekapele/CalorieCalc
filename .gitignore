@@ -1,0 +1,25 @@
+# Build artifacts
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+Makefile
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.dSYM/
+
+# Qt autogen and cache
+*_autogen/
+*.qrc.dep
+
+# Test/temporary
+Testing/
+
+# IDE
+.idea/
+.vscode/
