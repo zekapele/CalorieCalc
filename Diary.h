@@ -5,56 +5,142 @@
 #include <vector>
 #include <string>
 
+/**
+ * @brief Щоденник харчування
+ * 
+ * Зберігає прийоми їжі за день, обчислює статистику,
+ * відстежує воду та вагу.
+ */
 class Diary {
 public:
+    /**
+     * @brief Конструктор щоденника
+     * Ініціалізує ціль калорій (2000), ціль води (2000 мл)
+     */
     Diary();
     ~Diary() = default;
     
-    // Додати прийом їжі
+    /**
+     * @brief Додати прийом їжі
+     * @param meal Прийом їжі для додавання
+     */
     void addMeal(const SavedMeal& meal);
     
-    // Видалити прийом їжі
+    /**
+     * @brief Видалити прийом їжі за індексом
+     * @param index Індекс прийому їжі (0-based)
+     */
     void removeMeal(int index);
     
-    // Отримати всі прийоми їжі
+    /**
+     * @brief Отримати всі прийоми їжі
+     * @return Вектор прийомів їжі
+     */
     std::vector<SavedMeal> getAllMeals() const;
     
-    // Розрахунок загальних макроелементів
+    /**
+     * @brief Розрахувати загальні калорії за день
+     * @return Сума калорій з усіх прийомів їжі
+     */
     double getTotalCalories() const;
+    
+    /**
+     * @brief Розрахувати загальні вуглеводи
+     * @return Сума вуглеводів (г)
+     */
     double getTotalCarbs() const;
+    
+    /**
+     * @brief Розрахувати загальні білки
+     * @return Сума білків (г)
+     */
     double getTotalProtein() const;
+    
+    /**
+     * @brief Розрахувати загальні жири
+     * @return Сума жирів (г)
+     */
     double getTotalFat() const;
     
-    // Встановити ціль калорій
+    /**
+     * @brief Встановити ціль калорій на день
+     * @param goal Ціль калорій
+     */
     void setCalorieGoal(double goal);
+    
+    /**
+     * @brief Отримати ціль калорій
+     * @return Ціль калорій
+     */
     double getCalorieGoal() const;
     
-    // Залишок калорій
+    /**
+     * @brief Розрахувати залишок калорій
+     * @return Різниця між ціллю та з'їденими калоріями
+     */
     double getRemainingCalories() const;
     
-    // Вивести статистику дня
+    /**
+     * @brief Вивести статистику дня у консоль
+     */
     void printDailySummary() const;
     
-    // Вивести всі прийоми їжі
+    /**
+     * @brief Вивести всі прийоми їжі у консоль
+     */
     void printAllMeals() const;
     
-    // Очистити щоденник
+    /**
+     * @brief Очистити щоденник (видалити всі прийоми, скинути воду)
+     */
     void clear();
     
-    // Перевірка чи порожній щоденник
+    /**
+     * @brief Перевірити чи порожній щоденник
+     * @return true якщо немає прийомів їжі
+     */
     bool isEmpty() const;
     
-    // Кількість прийомів їжі
+    /**
+     * @brief Отримати кількість прийомів їжі
+     * @return Кількість прийомів
+     */
     size_t getMealsCount() const;
 
-    // Вода (мл)
+    /**
+     * @brief Додати випиту воду
+     * @param ml Кількість води в мілілітрах
+     */
     void addWater(int ml);
+    
+    /**
+     * @brief Встановити ціль води на день
+     * @param ml Ціль води в мілілітрах
+     */
     void setWaterGoal(int ml);
+    
+    /**
+     * @brief Отримати випиту воду
+     * @return Вода в мілілітрах
+     */
     int getWaterMl() const;
+    
+    /**
+     * @brief Отримати ціль води
+     * @return Ціль води в мілілітрах
+     */
     int getWaterGoalMl() const;
 
-    // Вага (кг)
+    /**
+     * @brief Встановити вагу
+     * @param kg Вага в кілограмах
+     */
     void setWeightKg(double kg);
+    
+    /**
+     * @brief Отримати вагу
+     * @return Вага в кілограмах
+     */
     double getWeightKg() const;
 
 private:

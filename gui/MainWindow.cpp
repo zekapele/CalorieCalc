@@ -12,10 +12,29 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QDialog>
+#include <QFileDialog>
+#include <QTextStream>
+#include <QStringConverter>
+#include <QPrinter>
+#include <QPainter>
+#include <QPageSize>
+#include <algorithm>
+#ifdef QT_CHARTS_LIB
+#include <QChartView>
+#include <QLineSeries>
+#include <QBarSeries>
+#include <QBarSet>
+#include <QBarCategoryAxis>
+#include <QValueAxis>
+#include <QChart>
+#endif
+#include "../CsvImportExport.h"
+#include <map>
+#include <cctype>
+#include <QTabWidget>
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setupUi();
-    applyBlueWhiteTheme();
 }
 
 void MainWindow::setupUi() {
@@ -54,6 +73,15 @@ void MainWindow::setupUi() {
     searchEdit_->setPlaceholderText(tr("Введіть назву продукту..."));
     auto* searchBtn = new QPushButton(tr("Пошук"), leftBox);
     searchBtn->setIcon(style()->standardIcon(QStyle::SP_FileDialogContentsView));
+    
+    // Category filter
+    categoryFilter_ = new QComboBox(leftBox);
+    categoryFilter_->addItem(tr("Всі категорії"));
+    auto categories = foodDb_.getAllCategories();
+    for (const auto& cat : categories) {
+        categoryFilter_->addItem(QString::fromStdString(cat));
+    }
+    
     resultsList_ = new QListWidget(leftBox);
     resultsList_->setAlternatingRowColors(true);
 
@@ -108,7 +136,11 @@ void MainWindow::setupUi() {
 
     leftLayout->setSpacing(8);
     leftLayout->addWidget(searchEdit_);
-    leftLayout->addWidget(searchBtn);
+    auto* searchRow = new QHBoxLayout();
+    searchRow->addWidget(searchBtn);
+    searchRow->addWidget(new QLabel(tr("Категорія:"), leftBox));
+    searchRow->addWidget(categoryFilter_);
+    leftLayout->addLayout(searchRow);
     leftLayout->addWidget(resultsList_);
     leftLayout->addLayout(amountRow);
     leftLayout->addWidget(customBox);
@@ -204,8 +236,20 @@ void MainWindow::setupUi() {
     goalsLayout->addWidget(caloriesLabel_);
     goalsLayout->addWidget(macrosLabel_);
 
-    // Weekly report button
+    // Weekly report and actions
     weeklyReportBtn_ = new QPushButton(tr("Звіт за 7 днів"), rightBox);
+    
+    auto* actionsRow = new QHBoxLayout();
+    themeToggleBtn_ = new QPushButton(tr("☀ Світла тема"), rightBox);
+    exportCSVBtn_ = new QPushButton(tr("Експорт CSV"), rightBox);
+    importCSVBtn_ = new QPushButton(tr("Імпорт CSV"), rightBox);
+    exportPDFBtn_ = new QPushButton(tr("Експорт PDF"), rightBox);
+    chartsBtn_ = new QPushButton(tr("Графіки"), rightBox);
+    actionsRow->addWidget(themeToggleBtn_);
+    actionsRow->addWidget(exportCSVBtn_);
+    actionsRow->addWidget(importCSVBtn_);
+    actionsRow->addWidget(exportPDFBtn_);
+    actionsRow->addWidget(chartsBtn_);
 
     // Arrange right panel
     auto* goalsContainer = goalsBox;
@@ -215,6 +259,7 @@ void MainWindow::setupUi() {
     rightLayout->addWidget(removeButton_);
     rightLayout->addWidget(goalsContainer);
     rightLayout->addWidget(weeklyReportBtn_);
+    rightLayout->addLayout(actionsRow);
     rightBox->setLayout(rightLayout);
 
     // Layout
@@ -225,6 +270,7 @@ void MainWindow::setupUi() {
 
     // Signals
     connect(searchBtn, &QPushButton::clicked, this, &MainWindow::onSearch);
+    connect(categoryFilter_, qOverload<int>(&QComboBox::currentIndexChanged), this, &MainWindow::onSearch);
     connect(addButton_, &QPushButton::clicked, this, &MainWindow::onAddFood);
     connect(removeButton_, &QPushButton::clicked, this, &MainWindow::onRemoveMeal);
     connect(goalSpin_, &QSpinBox::valueChanged, this, &MainWindow::onSetGoal);
@@ -245,6 +291,11 @@ void MainWindow::setupUi() {
     connect(waterGoalSpin_, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::onSetWaterGoal);
     connect(weightSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, &MainWindow::onSetWeight);
     connect(weeklyReportBtn_, &QPushButton::clicked, this, &MainWindow::onShowWeeklyReport);
+    connect(themeToggleBtn_, &QPushButton::clicked, this, &MainWindow::onToggleTheme);
+    connect(exportCSVBtn_, &QPushButton::clicked, this, &MainWindow::onExportCSV);
+    connect(importCSVBtn_, &QPushButton::clicked, this, &MainWindow::onImportCSV);
+    connect(exportPDFBtn_, &QPushButton::clicked, this, &MainWindow::onExportPDF);
+    connect(chartsBtn_, &QPushButton::clicked, this, &MainWindow::onShowCharts);
 
     // Init storage
     ensureStorageDirs();
@@ -255,44 +306,106 @@ void MainWindow::setupUi() {
     weightSpin_->setValue(diary_.getWeightKg());
     refreshDiary();
     refreshStats();
+    
+    // Apply initial theme
+    applyDarkTheme();
 }
 
-void MainWindow::applyBlueWhiteTheme() {
-    // Softened black–orange dark theme
-    const QColor bgMain(16, 16, 16);
-    const QColor bgPanel(24, 24, 24);
-    const QColor bgAlt(30, 30, 30);
-    const QColor textMain(232, 232, 232);
-    const QColor accent(255, 169, 77);
+void MainWindow::applyDarkTheme() {
+    applyTheme(true);
+}
 
-    QPalette pal = qApp->palette();
-    pal.setColor(QPalette::Window, bgMain);
-    pal.setColor(QPalette::Base, bgPanel);
-    pal.setColor(QPalette::AlternateBase, bgAlt);
-    pal.setColor(QPalette::Text, textMain);
-    pal.setColor(QPalette::WindowText, textMain);
-    pal.setColor(QPalette::Button, bgPanel);
-    pal.setColor(QPalette::ButtonText, textMain);
-    pal.setColor(QPalette::Highlight, accent);
-    pal.setColor(QPalette::HighlightedText, QColor(20, 20, 20));
-    qApp->setPalette(pal);
+void MainWindow::applyLightTheme() {
+    applyTheme(false);
+}
 
-    setStyleSheet(
-        "QGroupBox { font-weight: 600; border: 1px solid #2C2C2C; border-radius: 8px; margin-top: 12px; color: #E8E8E8; }"
-        "QGroupBox::title { padding: 0 8px; color: #FFA94D; }"
-        "QPushButton { background: #2A2A2A; color: #E8E8E8; padding: 7px 12px; border: 1px solid #3A3A3A; border-radius: 8px; }"
-        "QPushButton:hover { border-color: #FFA94D; background: #333333; }"
-        "QLineEdit, QSpinBox, QComboBox, QDoubleSpinBox { padding: 7px 9px; border: 1px solid #3A3A3A; border-radius: 8px; background: #181818; color: #E8E8E8; }"
-        "QListWidget { background: #181818; border: 1px solid #2C2C2C; border-radius: 8px; color: #E8E8E8; }"
-        "QTabBar::tab { background: #1E1E1E; color: #C8C8C8; padding: 7px 14px; border-top-left-radius: 8px; border-top-right-radius: 8px; margin-right: 4px; border: 1px solid #2C2C2C; }"
-        "QTabBar::tab:selected { background: #2A2A2A; color: #FFA94D; border-color: #3A3A3A; }"
-        "QTabWidget::pane { border: 1px solid #2C2C2C; border-radius: 8px; top: -1px; }"
-        "QLabel { color: #E8E8E8; }"
-        "QCalendarWidget QWidget { background-color: #181818; color: #E8E8E8; }"
-        "QCalendarWidget QAbstractItemView:enabled { selection-background-color: #FFA94D; selection-color: #141414; }"
-        "QProgressBar { border: 1px solid #3A3A3A; border-radius: 8px; background: #181818; color: #E8E8E8; text-align: center; }"
-        "QProgressBar::chunk { background: #FFA94D; border-radius: 8px; }"
-    );
+void MainWindow::applyTheme(bool dark) {
+    isDarkTheme_ = dark;
+    themeToggleBtn_->setText(dark ? tr("☀ Світла тема") : tr("🌙 Темна тема"));
+    
+    if (dark) {
+        // Modern dark theme with elegant colors
+        const QColor bgMain(18, 18, 22);        // Deep dark blue-gray
+        const QColor bgPanel(26, 28, 34);       // Slightly lighter panel
+        const QColor bgAlt(32, 34, 42);         // Alternate background
+        const QColor textMain(230, 230, 235);   // Soft white
+        const QColor accent(100, 181, 246);     // Modern blue accent
+        const QColor accentHover(129, 199, 252); // Lighter blue for hover
+        const QColor border(45, 47, 55);         // Subtle border
+
+        QPalette pal = qApp->palette();
+        pal.setColor(QPalette::Window, bgMain);
+        pal.setColor(QPalette::Base, bgPanel);
+        pal.setColor(QPalette::AlternateBase, bgAlt);
+        pal.setColor(QPalette::Text, textMain);
+        pal.setColor(QPalette::WindowText, textMain);
+        pal.setColor(QPalette::Button, bgPanel);
+        pal.setColor(QPalette::ButtonText, textMain);
+        pal.setColor(QPalette::Highlight, accent);
+        pal.setColor(QPalette::HighlightedText, QColor(18, 18, 22));
+        qApp->setPalette(pal);
+
+        setStyleSheet(
+            "QGroupBox { font-weight: 600; border: 1px solid #2D2F37; border-radius: 10px; margin-top: 14px; padding-top: 8px; color: #E6E6EB; background: #1A1A1E; }"
+            "QGroupBox::title { padding: 0 10px; color: #64B5F6; subcontrol-origin: margin; subcontrol-position: top left; }"
+            "QPushButton { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2A2C36, stop:1 #1E2028); color: #E6E6EB; padding: 8px 16px; border: 1px solid #2D2F37; border-radius: 8px; font-weight: 500; }"
+            "QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3A3C46, stop:1 #2E3038); border-color: #64B5F6; color: #81C7FC; }"
+            "QPushButton:pressed { background: #1A1C24; }"
+            "QLineEdit, QSpinBox, QComboBox, QDoubleSpinBox { padding: 8px 12px; border: 1px solid #2D2F37; border-radius: 8px; background: #1A1A1E; color: #E6E6EB; selection-background-color: #64B5F6; selection-color: #1A1A1E; }"
+            "QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QDoubleSpinBox:focus { border: 2px solid #64B5F6; background: #1E2024; }"
+            "QListWidget { background: #1A1A1E; border: 1px solid #2D2F37; border-radius: 8px; color: #E6E6EB; }"
+            "QListWidget::item { padding: 6px; border-radius: 4px; }"
+            "QListWidget::item:selected { background: #64B5F6; color: #1A1A1E; }"
+            "QListWidget::item:hover { background: #2A2C36; }"
+            "QTabBar::tab { background: #1E2028; color: #A0A0A5; padding: 10px 18px; border-top-left-radius: 10px; border-top-right-radius: 10px; margin-right: 2px; border: 1px solid #2D2F37; border-bottom: none; }"
+            "QTabBar::tab:selected { background: #1A1A1E; color: #64B5F6; border-color: #2D2F37; border-bottom: 2px solid #64B5F6; font-weight: 600; }"
+            "QTabBar::tab:hover:!selected { background: #24262E; color: #C0C0C5; }"
+            "QTabWidget::pane { border: 1px solid #2D2F37; border-radius: 8px; top: -1px; background: #1A1A1E; }"
+            "QLabel { color: #E6E6EB; }"
+            "QCalendarWidget { background-color: #1A1A1E; color: #E6E6EB; border: 1px solid #2D2F37; border-radius: 8px; }"
+            "QCalendarWidget QAbstractItemView:enabled { selection-background-color: #64B5F6; selection-color: #1A1A1E; background-color: #1A1A1E; }"
+            "QCalendarWidget QHeaderView::section { background-color: #1E2028; color: #E6E6EB; border: none; padding: 8px; }"
+            "QProgressBar { border: 1px solid #2D2F37; border-radius: 10px; background: #1A1A1E; color: #E6E6EB; text-align: center; height: 20px; }"
+            "QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #64B5F6, stop:1 #81C7FC); border-radius: 10px; }"
+        );
+    } else {
+        // Modern light theme with fresh colors
+        QPalette pal = qApp->palette();
+        pal.setColor(QPalette::Window, QColor(250, 250, 252));
+        pal.setColor(QPalette::Base, QColor(255, 255, 255));
+        pal.setColor(QPalette::AlternateBase, QColor(248, 249, 251));
+        pal.setColor(QPalette::Text, QColor(30, 30, 35));
+        pal.setColor(QPalette::WindowText, QColor(30, 30, 35));
+        pal.setColor(QPalette::Button, QColor(245, 247, 250));
+        pal.setColor(QPalette::ButtonText, QColor(30, 30, 35));
+        pal.setColor(QPalette::Highlight, QColor(59, 130, 246));
+        pal.setColor(QPalette::HighlightedText, Qt::white);
+        qApp->setPalette(pal);
+
+        setStyleSheet(
+            "QGroupBox { font-weight: 600; border: 1px solid #E1E4E8; border-radius: 10px; margin-top: 14px; padding-top: 8px; color: #1E1E23; background: #FFFFFF; }"
+            "QGroupBox::title { padding: 0 10px; color: #3B82F6; subcontrol-origin: margin; subcontrol-position: top left; }"
+            "QPushButton { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #F5F7FA, stop:1 #E8EBF0); color: #1E1E23; padding: 8px 16px; border: 1px solid #D1D5DB; border-radius: 8px; font-weight: 500; }"
+            "QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #E8EBF0, stop:1 #DCE0E5); border-color: #3B82F6; color: #2563EB; }"
+            "QPushButton:pressed { background: #D1D5DB; }"
+            "QLineEdit, QSpinBox, QComboBox, QDoubleSpinBox { padding: 8px 12px; border: 1px solid #D1D5DB; border-radius: 8px; background: #FFFFFF; color: #1E1E23; selection-background-color: #3B82F6; selection-color: #FFFFFF; }"
+            "QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QDoubleSpinBox:focus { border: 2px solid #3B82F6; background: #FAFBFC; }"
+            "QListWidget { background: #FFFFFF; border: 1px solid #E1E4E8; border-radius: 8px; color: #1E1E23; }"
+            "QListWidget::item { padding: 6px; border-radius: 4px; }"
+            "QListWidget::item:selected { background: #3B82F6; color: #FFFFFF; }"
+            "QListWidget::item:hover { background: #F3F4F6; }"
+            "QTabBar::tab { background: #F5F7FA; color: #6B7280; padding: 10px 18px; border-top-left-radius: 10px; border-top-right-radius: 10px; margin-right: 2px; border: 1px solid #E1E4E8; border-bottom: none; }"
+            "QTabBar::tab:selected { background: #FFFFFF; color: #3B82F6; border-color: #E1E4E8; border-bottom: 2px solid #3B82F6; font-weight: 600; }"
+            "QTabBar::tab:hover:!selected { background: #F9FAFB; color: #4B5563; }"
+            "QTabWidget::pane { border: 1px solid #E1E4E8; border-radius: 8px; top: -1px; background: #FFFFFF; }"
+            "QLabel { color: #1E1E23; }"
+            "QCalendarWidget { background-color: #FFFFFF; color: #1E1E23; border: 1px solid #E1E4E8; border-radius: 8px; }"
+            "QCalendarWidget QAbstractItemView:enabled { selection-background-color: #3B82F6; selection-color: #FFFFFF; background-color: #FFFFFF; }"
+            "QCalendarWidget QHeaderView::section { background-color: #F9FAFB; color: #1E1E23; border: none; padding: 8px; }"
+            "QProgressBar { border: 1px solid #D1D5DB; border-radius: 10px; background: #F3F4F6; color: #1E1E23; text-align: center; height: 20px; }"
+            "QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #3B82F6, stop:1 #60A5FA); border-radius: 10px; }"
+        );
+    }
 }
 
 QString MainWindow::currentProfile() const {
@@ -365,10 +478,42 @@ void MainWindow::onProfileChanged(int) {
 
 void MainWindow::onSearch() {
     resultsList_->clear();
-    const auto query = searchEdit_->text().toStdString();
-    auto results = foodDb_.searchFoods(query);
+    const QString query = searchEdit_->text().trimmed();
+    QString selectedCategory = categoryFilter_->currentText();
+    
+    std::vector<Food> results;
+    
+    // Filter by category if not "Всі категорії"
+    if (selectedCategory != tr("Всі категорії")) {
+        results = foodDb_.searchByCategory(selectedCategory.toStdString());
+        // Then filter by query if provided
+        if (!query.isEmpty()) {
+            std::vector<Food> filtered;
+            std::string lowerQuery = query.toStdString();
+            std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(), ::tolower);
+            for (const auto& food : results) {
+                std::string foodName = food.getName();
+                std::transform(foodName.begin(), foodName.end(), foodName.begin(), ::tolower);
+                if (foodName.find(lowerQuery) != std::string::npos) {
+                    filtered.push_back(food);
+                }
+            }
+            results = filtered;
+        }
+    } else {
+        // Search all foods
+        if (query.isEmpty()) {
+            results = foodDb_.getAllFoods();
+        } else {
+            results = foodDb_.searchFoods(query.toStdString());
+        }
+    }
+    
     for (const auto& food : results) {
-        auto* item = new QListWidgetItem(QString::fromStdString(food.getName()), resultsList_);
+        QString itemText = QString::fromStdString(food.getName()) + " [" + 
+                          QString::fromStdString(food.getCategory()) + "] — " +
+                          QString::number(food.getCalories(), 'f', 0) + tr(" ккал/100г");
+        auto* item = new QListWidgetItem(itemText, resultsList_);
         item->setData(Qt::UserRole, QString::fromStdString(food.getName()));
     }
 }
@@ -509,11 +654,23 @@ void MainWindow::onShowWeeklyReport() {
 
     const QString profile = currentProfile();
     double sumCalories = 0.0;
+    QDate today = QDate::currentDate();
+    
     for (int i = 0; i < 7; ++i) {
         QDate day = selectedDate_.addDays(-i);
-        Diary d; d.setCalorieGoal(2000);
-        if (jsonSaver_.load(d, diaryFilePath(profile, day).toStdString())) {
-            const double kcal = d.getTotalCalories();
+        Diary d;
+        
+        // If this is the currently selected day, use the in-memory diary
+        if (day == selectedDate_) {
+            d = diary_; // Use current diary data
+        } else {
+            // Try to load from file
+            d.setCalorieGoal(2000);
+            jsonSaver_.load(d, diaryFilePath(profile, day).toStdString());
+        }
+        
+        const double kcal = d.getTotalCalories();
+        if (kcal > 0 || day == selectedDate_) {
             sumCalories += kcal;
             list->addItem(day.toString("yyyy-MM-dd") + ": " + QString::number(kcal, 'f', 0) + tr(" ккал"));
         } else {
@@ -524,6 +681,319 @@ void MainWindow::onShowWeeklyReport() {
 
     dlg.resize(420, 360);
     dlg.exec();
+}
+
+void MainWindow::onToggleTheme() {
+    applyTheme(!isDarkTheme_);
+}
+
+void MainWindow::onExportCSV() {
+    QString filename = QFileDialog::getSaveFileName(this, tr("Експорт CSV"), "", "CSV Files (*.csv)");
+    if (filename.isEmpty()) return;
+
+    QFile file(filename);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Помилка"), tr("Не вдалося відкрити файл для запису."));
+        return;
+    }
+
+    QTextStream out(&file);
+    out.setEncoding(QStringConverter::Utf8);
+    out << "Дата,Профіль,Секція,Продукт,Кількість (г),Калорії,Білки (г),Жири (г),Вуглеводи (г),Вода (мл),Вага (кг)\n";
+
+    const QString profile = currentProfile();
+    QDate startDate = selectedDate_.addDays(-30);
+    for (QDate d = startDate; d <= selectedDate_; d = d.addDays(1)) {
+        Diary dDiary;
+        if (jsonSaver_.load(dDiary, diaryFilePath(profile, d).toStdString())) {
+            auto meals = dDiary.getAllMeals();
+            for (const auto& meal : meals) {
+                const auto& food = meal.getFood();
+                out << d.toString("yyyy-MM-dd") << ","
+                    << profile << ","
+                    << QString::fromStdString(meal.getMealName()) << ","
+                    << QString::fromStdString(food.getName()) << ","
+                    << food.getAmount() << ","
+                    << meal.getTotalCalories() << ","
+                    << meal.getTotalProtein() << ","
+                    << meal.getTotalFat() << ","
+                    << meal.getTotalCarbs() << ","
+                    << dDiary.getWaterMl() << ","
+                    << dDiary.getWeightKg() << "\n";
+            }
+        }
+    }
+
+    file.close();
+    QMessageBox::information(this, tr("Готово"), tr("Дані експортовано у CSV файл."));
+}
+
+void MainWindow::onImportCSV() {
+    QString filename = QFileDialog::getOpenFileName(this, tr("Імпорт CSV"), "", "CSV Files (*.csv)");
+    if (filename.isEmpty()) return;
+
+    std::map<std::string, std::map<std::string, Diary>> importedData;
+    if (!CsvImportExport::importFromCSV(filename.toStdString(), importedData)) {
+        QMessageBox::warning(this, tr("Помилка"), tr("Не вдалося імпортувати дані з CSV файлу."));
+        return;
+    }
+
+    // Load imported data into current view
+    for (const auto& profilePair : importedData) {
+        QString profile = QString::fromStdString(profilePair.first);
+        for (const auto& datePair : profilePair.second) {
+            QString dateStr = QString::fromStdString(datePair.first);
+            QDate date = QDate::fromString(dateStr, "yyyy-MM-dd");
+            if (!date.isValid()) continue;
+            
+            const Diary& importedDiary = datePair.second;
+            QString profileKey = profile.isEmpty() ? tr("Без профілю") : profile;
+            
+            // Save imported diary
+            QString filePath = diaryFilePath(profileKey, date);
+            jsonSaver_.save(importedDiary, filePath.toStdString());
+        }
+    }
+
+    // Refresh current view
+    loadDiaryFor(currentProfile(), selectedDate_);
+    refreshDiary();
+    refreshStats();
+    
+    QMessageBox::information(this, tr("Готово"), tr("Дані імпортовано з CSV файлу."));
+}
+
+void MainWindow::onExportPDF() {
+    QString filename = QFileDialog::getSaveFileName(this, tr("Експорт PDF"), "", "PDF Files (*.pdf)");
+    if (filename.isEmpty()) return;
+
+    QPrinter printer(QPrinter::HighResolution);
+    printer.setOutputFormat(QPrinter::PdfFormat);
+    printer.setOutputFileName(filename);
+    printer.setPageSize(QPageSize::A4);
+
+    QPainter painter(&printer);
+    painter.setFont(QFont("Arial", 12));
+
+    int y = 50;
+    painter.drawText(50, y, tr("Звіт за %1").arg(selectedDate_.toString("yyyy-MM-dd")));
+    y += 30;
+
+    const auto meals = diary_.getAllMeals();
+    for (const auto& meal : meals) {
+        const auto& food = meal.getFood();
+        QString line = QString::fromStdString(meal.getMealName()) + ": " +
+            QString::fromStdString(food.getName()) + " — " +
+            QString::number(meal.getTotalCalories(), 'f', 0) + tr(" ккал");
+        painter.drawText(50, y, line);
+        y += 20;
+        if (y > printer.pageRect(QPrinter::DevicePixel).height() - 50) {
+            printer.newPage();
+            y = 50;
+        }
+    }
+
+    y += 20;
+    painter.drawText(50, y, tr("Всього калорій: %1").arg(diary_.getTotalCalories(), 0, 'f', 0));
+    y += 20;
+    painter.drawText(50, y, tr("Вода: %1 / %2 мл").arg(diary_.getWaterMl()).arg(diary_.getWaterGoalMl()));
+
+    painter.end();
+    QMessageBox::information(this, tr("Готово"), tr("PDF файл створено."));
+}
+
+void MainWindow::onShowCharts() {
+    QDialog chartDlg(this);
+    chartDlg.setWindowTitle(tr("Графіки"));
+    chartDlg.resize(1000, 700);
+    auto* layout = new QVBoxLayout(&chartDlg);
+    
+    const QString profile = currentProfile();
+    
+#ifdef QT_CHARTS_LIB
+    auto* tabWidget = new QTabWidget(&chartDlg);
+    
+    // Calories chart (7 days)
+    QChart* caloriesChart = new QChart();
+    QBarSeries* caloriesSeries = new QBarSeries();
+    QBarSet* caloriesSet = new QBarSet(tr("Калорії"));
+    
+    QStringList categories;
+    for (int i = 6; i >= 0; --i) {
+        QDate day = selectedDate_.addDays(-i);
+        Diary d;
+        if (day == selectedDate_) {
+            d = diary_;
+        } else {
+            jsonSaver_.load(d, diaryFilePath(profile, day).toStdString());
+        }
+        *caloriesSet << d.getTotalCalories();
+        categories << day.toString("MM-dd");
+    }
+    caloriesSeries->append(caloriesSet);
+    caloriesChart->addSeries(caloriesSeries);
+    caloriesChart->setTitle(tr("Калорії за 7 днів"));
+    caloriesChart->setAnimationOptions(QChart::SeriesAnimations);
+    
+    QBarCategoryAxis* axisX = new QBarCategoryAxis();
+    axisX->append(categories);
+    caloriesChart->addAxis(axisX, Qt::AlignBottom);
+    caloriesSeries->attachAxis(axisX);
+    
+    QValueAxis* axisY = new QValueAxis();
+    axisY->setTitleText(tr("Калорії (ккал)"));
+    caloriesChart->addAxis(axisY, Qt::AlignLeft);
+    caloriesSeries->attachAxis(axisY);
+    
+    caloriesChart->legend()->setVisible(true);
+    caloriesChart->legend()->setAlignment(Qt::AlignBottom);
+    
+    QChartView* caloriesView = new QChartView(caloriesChart);
+    caloriesView->setRenderHint(QPainter::Antialiasing);
+    tabWidget->addTab(caloriesView, tr("Калорії (7 днів)"));
+    
+    // Water chart (7 days)
+    QChart* waterChart = new QChart();
+    QBarSeries* waterSeries = new QBarSeries();
+    QBarSet* waterSet = new QBarSet(tr("Вода"));
+    
+    for (int i = 6; i >= 0; --i) {
+        QDate day = selectedDate_.addDays(-i);
+        Diary d;
+        if (day == selectedDate_) {
+            d = diary_;
+        } else {
+            jsonSaver_.load(d, diaryFilePath(profile, day).toStdString());
+        }
+        *waterSet << d.getWaterMl();
+    }
+    waterSeries->append(waterSet);
+    waterChart->addSeries(waterSeries);
+    waterChart->setTitle(tr("Вода за 7 днів"));
+    waterChart->setAnimationOptions(QChart::SeriesAnimations);
+    
+    QBarCategoryAxis* waterAxisX = new QBarCategoryAxis();
+    waterAxisX->append(categories);
+    waterChart->addAxis(waterAxisX, Qt::AlignBottom);
+    waterSeries->attachAxis(waterAxisX);
+    
+    QValueAxis* waterAxisY = new QValueAxis();
+    waterAxisY->setTitleText(tr("Вода (мл)"));
+    waterChart->addAxis(waterAxisY, Qt::AlignLeft);
+    waterSeries->attachAxis(waterAxisY);
+    
+    waterChart->legend()->setVisible(true);
+    waterChart->legend()->setAlignment(Qt::AlignBottom);
+    
+    QChartView* waterView = new QChartView(waterChart);
+    waterView->setRenderHint(QPainter::Antialiasing);
+    tabWidget->addTab(waterView, tr("Вода (7 днів)"));
+    
+    // Weight chart (30 days)
+    QChart* weightChart = new QChart();
+    QLineSeries* weightSeries = new QLineSeries();
+    weightSeries->setName(tr("Вага"));
+    
+    QVector<QString> weightDates;
+    for (int i = 29; i >= 0; --i) {
+        QDate day = selectedDate_.addDays(-i);
+        Diary d;
+        if (day == selectedDate_) {
+            d = diary_;
+        } else {
+            jsonSaver_.load(d, diaryFilePath(profile, day).toStdString());
+        }
+        double weight = d.getWeightKg();
+        if (weight > 0) {
+            weightSeries->append(29 - i, weight);
+            weightDates.append(day.toString("MM-dd"));
+        }
+    }
+    
+    if (weightSeries->count() > 0) {
+        weightChart->addSeries(weightSeries);
+        weightChart->setTitle(tr("Вага за 30 днів"));
+        weightChart->setAnimationOptions(QChart::SeriesAnimations);
+        
+        QValueAxis* weightAxisX = new QValueAxis();
+        weightAxisX->setTitleText(tr("День"));
+        weightAxisX->setRange(0, 29);
+        weightChart->addAxis(weightAxisX, Qt::AlignBottom);
+        weightSeries->attachAxis(weightAxisX);
+        
+        QValueAxis* weightAxisY = new QValueAxis();
+        weightAxisY->setTitleText(tr("Вага (кг)"));
+        weightChart->addAxis(weightAxisY, Qt::AlignLeft);
+        weightSeries->attachAxis(weightAxisY);
+        
+        weightChart->legend()->setVisible(true);
+        weightChart->legend()->setAlignment(Qt::AlignBottom);
+    } else {
+        QLabel* noDataLabel = new QLabel(tr("Немає даних про вагу"), &chartDlg);
+        noDataLabel->setAlignment(Qt::AlignCenter);
+        weightChart->setTitle(tr("Вага за 30 днів"));
+    }
+    
+    QChartView* weightView = new QChartView(weightChart);
+    weightView->setRenderHint(QPainter::Antialiasing);
+    tabWidget->addTab(weightView, tr("Вага (30 днів)"));
+    
+    layout->addWidget(tabWidget);
+#else
+    // Fallback to text charts if Qt Charts is not available
+    auto* infoLabel = new QLabel(&chartDlg);
+    QString chartText = tr("Графік калорій за останні 7 днів:\n\n");
+
+    QVector<double> calories;
+    QVector<QString> dates;
+    for (int i = 6; i >= 0; --i) {
+        QDate day = selectedDate_.addDays(-i);
+        Diary d;
+        if (day == selectedDate_) {
+            d = diary_;
+        } else {
+            jsonSaver_.load(d, diaryFilePath(profile, day).toStdString());
+        }
+        calories.append(d.getTotalCalories());
+        dates.append(day.toString("MM-dd"));
+    }
+
+    double maxCal = *std::max_element(calories.begin(), calories.end());
+    if (maxCal == 0) maxCal = 2000;
+
+    for (int i = 0; i < dates.size(); ++i) {
+        int barLength = static_cast<int>((calories[i] / maxCal) * 50);
+        QString bar = QString(barLength, QChar(0x2588));
+        chartText += dates[i] + ": " + QString::number(calories[i], 'f', 0) + tr(" ккал ") + bar + "\n";
+    }
+
+    chartText += "\n" + tr("Графік води за останні 7 днів:\n\n");
+    QVector<int> water;
+    for (int i = 6; i >= 0; --i) {
+        QDate day = selectedDate_.addDays(-i);
+        Diary d;
+        if (day == selectedDate_) {
+            d = diary_;
+        } else {
+            jsonSaver_.load(d, diaryFilePath(profile, day).toStdString());
+        }
+        water.append(d.getWaterMl());
+    }
+
+    int maxWater = *std::max_element(water.begin(), water.end());
+    if (maxWater == 0) maxWater = 2000;
+
+    for (int i = 0; i < dates.size(); ++i) {
+        int barLength = static_cast<int>((static_cast<double>(water[i]) / maxWater) * 50);
+        QString bar = QString(barLength, QChar(0x2588));
+        chartText += dates[i] + ": " + QString::number(water[i]) + tr(" мл ") + bar + "\n";
+    }
+
+    infoLabel->setText(chartText);
+    infoLabel->setFont(QFont("Courier", 10));
+    layout->addWidget(infoLabel);
+#endif
+    chartDlg.exec();
 }
 
 void MainWindow::refreshDiary() {

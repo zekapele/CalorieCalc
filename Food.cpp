@@ -2,9 +2,10 @@
 #include <iostream>
 #include <iomanip>
 
-Food::Food(const std::string& name, double calories, double carbs, double protein, double fat)
+Food::Food(const std::string& name, double calories, double carbs, double protein, double fat, 
+           const std::string& category)
     : name_(name), caloriesPer100g_(calories), carbsPer100g_(carbs),
-      proteinPer100g_(protein), fatPer100g_(fat), amount_(100.0) {
+      proteinPer100g_(protein), fatPer100g_(fat), amount_(100.0), category_(category) {
 }
 
 std::string Food::getName() const {
@@ -49,6 +50,10 @@ double Food::getTotalProtein() const {
 
 double Food::getTotalFat() const {
     return (fatPer100g_ * amount_) / 100.0;
+}
+
+std::string Food::getCategory() const {
+    return category_;
 }
 
 void Food::print() const {

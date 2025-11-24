@@ -9,6 +9,7 @@
 #include "JsonSaveStrategy.h"
 #include "TextSaveStrategy.h"
 #include "StatisticsCalculator.h"
+#include "Logger.h"
 
 static void clearCin() {
     std::cin.clear();
@@ -32,6 +33,10 @@ static void printMenu() {
 }
 
 int main() {
+    // Ініціалізація логера
+    Logger::getInstance().init("caloriecalc.log");
+    LOG_INFO("Application started");
+    
     FoodDatabase foodDb;
     Diary diary;
     JsonSaveStrategy jsonSaver;
@@ -43,12 +48,14 @@ int main() {
         if (!(std::cin >> choice)) {
             clearCin();
             std::cout << "Невірне введення. Спробуйте ще раз." << std::endl;
+            LOG_WARNING("Invalid input from user");
             continue;
         }
         clearCin();
 
         if (choice == 0) {
             std::cout << "До побачення!" << std::endl;
+            LOG_INFO("Application exiting");
             break;
         }
 
@@ -57,15 +64,18 @@ int main() {
                 std::cout << "Введіть запит для пошуку: ";
                 std::string query;
                 std::getline(std::cin, query);
+                LOG_DEBUG("Search query: " + query);
                 auto results = foodDb.searchFoods(query);
                 if (results.empty()) {
                     std::cout << "Нічого не знайдено." << std::endl;
+                    LOG_INFO("No search results");
                 } else {
                     std::cout << "Знайдено (назва — ккал на 100г):\n";
                     for (size_t i = 0; i < results.size(); ++i) {
                         std::cout << i + 1 << ") " << results[i].getName() << " — "
                                   << results[i].getCalories() << " ккал" << std::endl;
                     }
+                    LOG_INFO("Found " + std::to_string(results.size()) + " results");
                 }
                 break;
             }
@@ -108,6 +118,7 @@ int main() {
 
                 SavedMeal meal(mealName, chosen, grams);
                 diary.addMeal(meal);
+                LOG_INFO("Added meal: " + chosen.getName() + ", " + std::to_string(grams) + "g");
                 std::cout << "Додано: " << meal.getMealName() << ", " << chosen.getName()
                           << ", " << grams << " г ("
                           << meal.getTotalCalories() << " ккал)" << std::endl;
@@ -137,6 +148,7 @@ int main() {
                 }
                 clearCin();
                 diary.removeMeal(idx - 1);
+                LOG_INFO("Removed meal at index " + std::to_string(idx - 1));
                 std::cout << "Видалено." << std::endl;
                 break;
             }
@@ -150,6 +162,7 @@ int main() {
                 }
                 clearCin();
                 diary.setCalorieGoal(goal);
+                LOG_INFO("Set calorie goal: " + std::to_string(goal));
                 std::cout << "Ціль встановлено: " << goal << " ккал" << std::endl;
                 break;
             }
@@ -163,8 +176,10 @@ int main() {
                 std::getline(std::cin, name);
                 if (name.empty()) name = "diary";
                 if (jsonSaver.save(diary, name)) {
+                    LOG_INFO("Saved diary to JSON: " + name);
                     std::cout << "Збережено у файл: " << name << jsonSaver.getExtension() << std::endl;
                 } else {
+                    LOG_ERROR("Failed to save diary to JSON: " + name);
                     std::cout << "Помилка збереження." << std::endl;
                 }
                 break;
@@ -175,8 +190,10 @@ int main() {
                 std::getline(std::cin, name);
                 if (name.empty()) name = "diary";
                 if (jsonSaver.load(diary, name)) {
+                    LOG_INFO("Loaded diary from JSON: " + name);
                     std::cout << "Завантажено з: " << name << jsonSaver.getExtension() << std::endl;
                 } else {
+                    LOG_ERROR("Failed to load diary from JSON: " + name);
                     std::cout << "Помилка завантаження." << std::endl;
                 }
                 break;
@@ -187,8 +204,10 @@ int main() {
                 std::getline(std::cin, name);
                 if (name.empty()) name = "diary";
                 if (txtSaver.save(diary, name)) {
+                    LOG_INFO("Saved diary to TXT: " + name);
                     std::cout << "Збережено у файл: " << name << txtSaver.getExtension() << std::endl;
                 } else {
+                    LOG_ERROR("Failed to save diary to TXT: " + name);
                     std::cout << "Помилка збереження." << std::endl;
                 }
                 break;
@@ -199,17 +218,21 @@ int main() {
                 std::getline(std::cin, name);
                 if (name.empty()) name = "diary";
                 if (txtSaver.load(diary, name)) {
+                    LOG_INFO("Loaded diary from TXT: " + name);
                     std::cout << "Завантажено з: " << name << txtSaver.getExtension() << std::endl;
                 } else {
+                    LOG_ERROR("Failed to load diary from TXT: " + name);
                     std::cout << "Помилка завантаження." << std::endl;
                 }
                 break;
             }
             default:
                 std::cout << "Невірний вибір. Спробуйте ще раз." << std::endl;
+                LOG_WARNING("Invalid menu choice: " + std::to_string(choice));
                 break;
         }
     }
 
+    Logger::getInstance().close();
     return 0;
 }

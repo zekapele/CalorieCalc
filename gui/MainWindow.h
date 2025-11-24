@@ -38,10 +38,17 @@ private slots:
     void onSetWaterGoal(int value);
     void onSetWeight(double value);
     void onShowWeeklyReport();
+    void onToggleTheme();
+    void onExportCSV();
+    void onImportCSV();
+    void onExportPDF();
+    void onShowCharts();
 
 private:
     void setupUi();
-    void applyBlueWhiteTheme();
+    void applyDarkTheme();
+    void applyLightTheme();
+    void applyTheme(bool dark);
     void refreshDiary();
     void refreshStats();
     void removeFromSelectedTab();
@@ -65,6 +72,7 @@ private:
 
     QLineEdit* searchEdit_{};
     QListWidget* resultsList_{};
+    QComboBox* categoryFilter_{};
     QSpinBox* amountSpin_{};
     QComboBox* mealTypeCombo_{};
     QPushButton* addButton_{};
@@ -106,6 +114,14 @@ private:
 
     // Weekly report
     QPushButton* weeklyReportBtn_{};
+
+    // Theme and export
+    QPushButton* themeToggleBtn_{};
+    QPushButton* exportCSVBtn_{};
+    QPushButton* importCSVBtn_{};
+    QPushButton* exportPDFBtn_{};
+    QPushButton* chartsBtn_{};
+    bool isDarkTheme_{true};
 
     // In-memory storage: profile -> (date -> diary snapshot)
     QMap<QString, QMap<QDate, Diary>> diaries_;

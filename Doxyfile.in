@@ -1,0 +1,15 @@
+PROJECT_NAME           = "Calorie Counter"
+PROJECT_NUMBER         = 1.0
+PROJECT_BRIEF          = "Трекер харчування на C++/Qt"
+OUTPUT_DIRECTORY       = docs/doxygen
+INPUT                  = .
+FILE_PATTERNS          = *.h *.cpp
+RECURSIVE              = YES
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+HAVE_DOT               = NO
+QUIET                  = NO
+
