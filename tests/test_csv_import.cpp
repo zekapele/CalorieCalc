@@ -5,6 +5,7 @@
 #include "../Food.h"
 #include <map>
 #include <filesystem>
+#include <fstream>
 
 TEST(CsvImportExportTest, ExportImportRoundTrip) {
     std::map<std::string, std::map<std::string, Diary>> originalData;

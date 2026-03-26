@@ -17,7 +17,7 @@ int main(int argc, char* argv[]) {
     MainWindow w;
     w.setWindowTitle(QApplication::translate("MainWindow", "calorie counter"));
     w.resize(980, 640);
-    w.show();
+    w.showMaximized();
     return app.exec();
 }
 

@@ -11,13 +11,19 @@
 #include <QMap>
 #include <QVector>
 #include <QCalendarWidget>
+#include <QGroupBox>
 #include <QDate>
 #include <QString>
 #include <QDir>
 #include <QProgressBar>
+#include <QTimeEdit>
 #include "FoodDatabase.h"
 #include "Diary.h"
 #include "JsonSaveStrategy.h"
+#include "TrainingDiary.h"
+#include "TrainingJsonSaveStrategy.h"
+#include "TrainingPlanGenerator.h"
+#include "OfflineAssistant.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -44,6 +50,16 @@ private slots:
     void onExportPDF();
     void onShowCharts();
 
+    // Fitness/training slots
+    void onAddTraining();
+    void onRemoveTraining();
+    void onGenerateTrainingPlan7Days();
+    void onAskOfflineAssistant();
+    void onAskOnlineAssistantPlaceholder();
+    void onMarkTrainingCompleted();
+    void onDuplicateTrainingTomorrow();
+    void onShowDailyTip();
+
 private:
     void setupUi();
     void applyDarkTheme();
@@ -51,6 +67,7 @@ private:
     void applyTheme(bool dark);
     void refreshDiary();
     void refreshStats();
+    void refreshTraining();
     void removeFromSelectedTab();
 
     // Per-day/profile helpers
@@ -60,10 +77,17 @@ private:
     void loadDiaryFor(const QString& profile, const QDate& date);
     void saveDiaryFor(const QString& profile, const QDate& date);
 
+    QString trainingFilePath(const QString& profile, const QDate& date) const;
+    void loadTrainingFor(const QString& profile, const QDate& date);
+    void saveTrainingFor(const QString& profile, const QDate& date);
+    int calculateConsistencyStreak();
+
     // Data
     FoodDatabase foodDb_;
     Diary diary_;
     JsonSaveStrategy jsonSaver_;
+    TrainingDiary trainingDiary_;
+    TrainingJsonSaveStrategy trainingSaver_;
 
     // Widgets
     // Top controls
@@ -115,6 +139,26 @@ private:
     // Weekly report
     QPushButton* weeklyReportBtn_{};
 
+    // Training (fitness)
+    QGroupBox* trainingBox_{};
+    QComboBox* trainingGoalCombo_{};
+    QComboBox* trainingTypeCombo_{};
+    QTimeEdit* trainingTimeEdit_{};
+    QSpinBox* trainingDurationSpin_{};
+    QComboBox* trainingStatusCombo_{};
+    QLineEdit* trainingNotesEdit_{};
+    QPushButton* addTrainingBtn_{};
+    QPushButton* removeTrainingBtn_{};
+    QListWidget* trainingsList_{};
+    QLabel* trainingSummaryLabel_{};
+    QPushButton* generatePlanBtn_{};
+    QPushButton* assistantBtn_{};
+    QPushButton* markCompletedBtn_{};
+    QPushButton* duplicateTomorrowBtn_{};
+    QPushButton* dailyTipBtn_{};
+    QLabel* fitnessKpiLabel_{};
+    QLabel* tipLabel_{};
+
     // Theme and export
     QPushButton* themeToggleBtn_{};
     QPushButton* exportCSVBtn_{};
@@ -125,6 +169,7 @@ private:
 
     // In-memory storage: profile -> (date -> diary snapshot)
     QMap<QString, QMap<QDate, Diary>> diaries_;
+    QMap<QString, QMap<QDate, TrainingDiary>> trainings_;
     QDate selectedDate_;
 };
 

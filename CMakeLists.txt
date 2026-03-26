@@ -173,6 +173,11 @@ if(BUILD_GUI)
         StatisticsCalculator.cpp
         Logger.cpp
         CsvImportExport.cpp
+        TrainingSession.cpp
+        TrainingDiary.cpp
+        TrainingJsonSaveStrategy.cpp
+        TrainingPlanGenerator.cpp
+        OfflineAssistant.cpp
     )
     
     if(SQLite3_FOUND)
