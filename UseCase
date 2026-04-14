@@ -1,0 +1,85 @@
+
+Use Case ID and Name
+
+
+
+
+Field	Description
+Use Case ID and Name	UC-01: Start Workout
+
+
+
+General Information
+
+
+
+
+Field	Description
+Description	User starts a workout session. The system generates a personalized training plan and guides the user through exercises.
+Primary Actor	User
+Secondary Actors	Fitness AI App (System)
+Preconditions	User has access to the application; application is running; user is logged in (optional)
+
+
+
+Main Scenario
+
+
+
+
+Step	Description
+1	System displays the main screen
+2	User selects “Start workout”
+3	System checks if personal data exists
+4	System requests minimal personal data if not available
+5	User enters personal data (goal, level, duration)
+6	System validates entered data
+7	System generates a training plan
+8	System displays the training plan
+9	User starts performing exercises
+10	System tracks workout progress
+11	User completes the workout
+12	System saves results and displays summary
+
+
+
+Alternative Scenarios
+
+
+
+
+ID	Description
+A1	User selects “Quick start”; system skips personal data input; system generates default training plan; system displays exercises; user starts workout
+
+
+
+Edge Case
+
+
+
+
+ID	Description
+E1	System detects existing personal data and skips input steps, continuing with plan generation
+E2	User starts workout without login; system allows limited functionality and generates a basic training plan
+Error Scenarios
+
+
+
+
+ID	Description
+ER1	User enters invalid or incomplete data; system shows validation error; user corrects input; flow returns to data entry step
+ER1	System fails to generate a training plan due to internal error; system shows error message and suggests retry
+Postconditions
+
+
+
+
+Field	Description
+Postconditions	Workout session is completed; results are saved; user can view progress
+Rules and Restrictions
+
+
+
+
+Field	Description
+Rules and Restrictions	Personal data must be valid; training plan must be generated before workout starts

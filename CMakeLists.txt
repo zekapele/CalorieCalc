@@ -162,6 +162,12 @@ if(BUILD_GUI)
 
     add_executable(CalorieCalcGUI MACOSX_BUNDLE
         gui/main_gui.cpp
+        gui/AuthStore.cpp
+        gui/AuthStore.h
+        gui/LoginDialog.cpp
+        gui/LoginDialog.h
+        gui/ProfileDialog.cpp
+        gui/ProfileDialog.h
         gui/MainWindow.cpp
         gui/MainWindow.h
         Food.cpp

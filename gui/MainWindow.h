@@ -28,7 +28,7 @@
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    explicit MainWindow(const QString& loggedInLogin, QWidget* parent = nullptr);
 
 private slots:
     void onSearch();
@@ -43,6 +43,7 @@ private slots:
     void onAddWater();
     void onSetWaterGoal(int value);
     void onSetWeight(double value);
+    void onOpenProfileDialog();
     void onShowWeeklyReport();
     void onToggleTheme();
     void onExportCSV();
@@ -59,6 +60,9 @@ private slots:
     void onMarkTrainingCompleted();
     void onDuplicateTrainingTomorrow();
     void onShowDailyTip();
+    void onShowTrainingWeeklyReport();
+    void onStartWorkout();
+    void onQuickStartWorkout();
 
 private:
     void setupUi();
@@ -71,7 +75,10 @@ private:
     void removeFromSelectedTab();
 
     // Per-day/profile helpers
+    QString userDataRoot() const;
     QString currentProfile() const;
+    /** Папка на диску (guest для «Основний»/логін за замовчуванням/«Без профілю»). */
+    QString profileStorageDir(const QString& profile) const;
     void ensureStorageDirs();
     QString diaryFilePath(const QString& profile, const QDate& date) const;
     void loadDiaryFor(const QString& profile, const QDate& date);
@@ -81,6 +88,9 @@ private:
     void loadTrainingFor(const QString& profile, const QDate& date);
     void saveTrainingFor(const QString& profile, const QDate& date);
     int calculateConsistencyStreak();
+    void loadProfileMeta(const QString& profile);
+    void saveProfileMeta(const QString& profile) const;
+    double estimateCalorieGoalFromProfile() const;
 
     // Data
     FoodDatabase foodDb_;
@@ -91,8 +101,12 @@ private:
 
     // Widgets
     // Top controls
-    QComboBox* profileCombo_{}; // "Без профілю" + custom names
+    QComboBox* profileCombo_{}; // лише логін (один пункт)
+    QPushButton* profileSettingsBtn_{};
     QCalendarWidget* calendar_{};
+    QSpinBox* ageSpin_{};           // years
+    QDoubleSpinBox* heightSpin_{};  // cm
+    QComboBox* activityCombo_{};    // activity level
 
     QLineEdit* searchEdit_{};
     QListWidget* resultsList_{};
@@ -156,6 +170,9 @@ private:
     QPushButton* markCompletedBtn_{};
     QPushButton* duplicateTomorrowBtn_{};
     QPushButton* dailyTipBtn_{};
+    QPushButton* trainingWeeklyReportBtn_{};
+    QPushButton* startWorkoutBtn_{};
+    QPushButton* quickStartWorkoutBtn_{};
     QLabel* fitnessKpiLabel_{};
     QLabel* tipLabel_{};
 
@@ -171,5 +188,8 @@ private:
     QMap<QString, QMap<QDate, Diary>> diaries_;
     QMap<QString, QMap<QDate, TrainingDiary>> trainings_;
     QDate selectedDate_;
+
+    QString loggedInLogin_;
+    QString userDirSlug_; // data/<userDirSlug>/guest/...
 };
 
