@@ -5,11 +5,13 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>${EXECUTABLE_NAME}</string>
+	<string>CalorieCalc</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.example.caloriecounter</string>
+	<string>com.caloriecalc.app</string>
+	<key>CFBundleDisplayName</key>
+	<string>CalorieCalc</string>
 	<key>CFBundleName</key>
-	<string>calorie counter</string>
+	<string>CalorieCalc</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -20,5 +22,9 @@
 	<string>10.14</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.healthcare-fitness</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
 </dict>
 </plist>

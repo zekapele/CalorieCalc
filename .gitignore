@@ -23,6 +23,10 @@ Testing/
 # IDE
 .idea/
 .vscode/
+.cursor/
+
+# Local user data (diaries, profiles)
+data/
 
 # Logs
 *.log

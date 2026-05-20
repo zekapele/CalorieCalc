@@ -9,7 +9,7 @@ TEST(FoodDatabaseTest, Constructor) {
 TEST(FoodDatabaseTest, SearchFoods) {
     FoodDatabase db;
     auto results = db.searchFoods("яблуко");
-    EXPECT_GT(results.size(), 0);
+    ASSERT_FALSE(results.empty());
     EXPECT_EQ(results[0].getName(), "Яблуко");
 }
 

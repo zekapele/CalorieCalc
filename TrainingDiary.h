@@ -10,6 +10,7 @@ class TrainingDiary {
 public:
     void addSession(const TrainingSession& session);
     void removeSession(int index);
+    void replaceSession(int index, const TrainingSession& session);
     std::vector<TrainingSession> getAllSessions() const { return sessions_; }
 
     // Convenience: total training time in minutes.

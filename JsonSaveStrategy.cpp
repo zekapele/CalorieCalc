@@ -19,6 +19,9 @@ bool JsonSaveStrategy::save(const Diary& diary, const std::string& filename) con
     file << "  \"water_ml\": " << diary.getWaterMl() << ",\n";
     file << "  \"water_goal_ml\": " << diary.getWaterGoalMl() << ",\n";
     file << "  \"weight_kg\": " << diary.getWeightKg() << ",\n";
+    file << "  \"protein_goal_g\": " << diary.getProteinGoalG() << ",\n";
+    file << "  \"carb_goal_g\": " << diary.getCarbGoalG() << ",\n";
+    file << "  \"fat_goal_g\": " << diary.getFatGoalG() << ",\n";
     file << "  \"meals\": [\n";
     
     auto meals = diary.getAllMeals();
@@ -84,6 +87,9 @@ bool JsonSaveStrategy::load(Diary& diary, const std::string& filename) const {
     int water = 0;
     int waterGoal = 2000;
     double weight = 0.0;
+    double proteinGoal = 150.0;
+    double carbGoal = 250.0;
+    double fatGoal = 70.0;
 
     std::string mealName;
     std::string foodName;
@@ -124,6 +130,12 @@ bool JsonSaveStrategy::load(Diary& diary, const std::string& filename) const {
             waterGoal = static_cast<int>(std::stod(trim(extractAfterColon(line))));
         } else if (line.find("weight_kg") != std::string::npos) {
             weight = std::stod(trim(extractAfterColon(line)));
+        } else if (line.find("protein_goal_g") != std::string::npos) {
+            proteinGoal = std::stod(trim(extractAfterColon(line)));
+        } else if (line.find("carb_goal_g") != std::string::npos) {
+            carbGoal = std::stod(trim(extractAfterColon(line)));
+        } else if (line.find("fat_goal_g") != std::string::npos) {
+            fatGoal = std::stod(trim(extractAfterColon(line)));
         } else if (line.find("\"meal_name\"") != std::string::npos) {
             mealName = trimQuotes(extractAfterColon(line));
             haveMealName = true;
@@ -152,6 +164,9 @@ bool JsonSaveStrategy::load(Diary& diary, const std::string& filename) const {
     diary.setCalorieGoal(goal);
     diary.setWaterGoal(waterGoal);
     diary.setWeightKg(weight);
+    diary.setProteinGoalG(proteinGoal);
+    diary.setCarbGoalG(carbGoal);
+    diary.setFatGoalG(fatGoal);
     if (water > 0) diary.addWater(water);
 
     file.close();

@@ -1,25 +1,133 @@
 #include "FoodDatabase.h"
+#include "Parallel.h"
+
 #include <algorithm>
 #include <cctype>
+#include <codecvt>
+#include <cwctype>
+#include <locale>
+#include <future>
+#include <string>
+#include <vector>
+
+namespace {
+
+std::string utf8ToLower(const std::string& s) {
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+    try {
+        std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
+        std::wstring w = conv.from_bytes(s);
+        try {
+            std::locale loc("uk_UA.UTF-8");
+            for (wchar_t& ch : w) {
+                ch = std::tolower(ch, loc);
+            }
+        } catch (...) {
+            try {
+                std::locale loc("en_US.UTF-8");
+                for (wchar_t& ch : w) {
+                    ch = std::tolower(ch, loc);
+                }
+            } catch (...) {
+                for (wchar_t& ch : w) {
+                    ch = static_cast<wchar_t>(std::towlower(static_cast<std::wint_t>(ch)));
+                }
+            }
+        }
+        return conv.to_bytes(w);
+    } catch (...) {
+        std::string out = s;
+        for (char& c : out) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return out;
+    }
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+}
+
+} // namespace
 
 FoodDatabase::FoodDatabase() {
     initializeDefaultFoods();
 }
 
+namespace {
+
+bool foodNameMatchesQuery(const Food& food, const std::string& lowerQuery) {
+    const std::string foodNameLower = utf8ToLower(food.getName());
+    return foodNameLower.find(lowerQuery) != std::string::npos;
+}
+
+} // namespace
+
 std::vector<Food> FoodDatabase::searchFoods(const std::string& query) const {
     std::vector<Food> results;
-    std::string lowerQuery = query;
-    std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(), ::tolower);
-    
+    const std::string lowerQuery = utf8ToLower(query);
+
     for (const auto& food : foods_) {
-        std::string foodName = food.getName();
-        std::transform(foodName.begin(), foodName.end(), foodName.begin(), ::tolower);
-        
-        if (foodName.find(lowerQuery) != std::string::npos) {
+        if (foodNameMatchesQuery(food, lowerQuery)) {
             results.push_back(food);
         }
     }
-    
+
+    return results;
+}
+
+std::vector<Food> FoodDatabase::searchFoodsParallel(const std::string& query,
+                                                    const unsigned threadCount) const {
+    if (foods_.empty()) {
+        return {};
+    }
+
+    const std::string lowerQuery = utf8ToLower(query);
+    const unsigned threads =
+        Parallel::threadCount(threadCount, static_cast<unsigned>(foods_.size()));
+    if (threads <= 1 || foods_.size() < 8) {
+        return searchFoods(query);
+    }
+
+    std::vector<std::vector<Food>> partial(threads);
+    std::vector<std::future<void>> futures;
+    const size_t chunk = (foods_.size() + threads - 1) / threads;
+    for (unsigned t = 0; t < threads; ++t) {
+        const size_t begin = static_cast<size_t>(t) * chunk;
+        if (begin >= foods_.size()) {
+            break;
+        }
+        const size_t end = std::min(foods_.size(), begin + chunk);
+        futures.push_back(std::async(std::launch::async, [this, &lowerQuery, &partial, t, begin, end]() {
+            std::vector<Food> local;
+            for (size_t i = begin; i < end; ++i) {
+                if (foodNameMatchesQuery(foods_[i], lowerQuery)) {
+                    local.push_back(foods_[i]);
+                }
+            }
+            partial[t] = std::move(local);
+        }));
+    }
+    for (auto& f : futures) {
+        f.get();
+    }
+
+    std::vector<Food> results;
+    size_t total = 0;
+    for (const auto& p : partial) {
+        total += p.size();
+    }
+    results.reserve(total);
+    for (auto& p : partial) {
+        results.insert(results.end(), std::make_move_iterator(p.begin()), std::make_move_iterator(p.end()));
+    }
     return results;
 }
 

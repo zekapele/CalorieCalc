@@ -10,6 +10,9 @@
 TEST(SaveStrategyTest, JsonSaveLoad) {
     Diary diary;
     diary.setCalorieGoal(2500.0);
+    diary.setProteinGoalG(140.0);
+    diary.setCarbGoalG(300.0);
+    diary.setFatGoalG(65.0);
     Food apple("Яблуко", 52, 14, 0.3, 0.2);
     diary.addMeal(SavedMeal("Сніданок", apple, 100.0));
     diary.addWater(500);
@@ -25,6 +28,9 @@ TEST(SaveStrategyTest, JsonSaveLoad) {
     ASSERT_TRUE(saver.load(loaded, testFile));
     
     EXPECT_NEAR(loaded.getCalorieGoal(), 2500.0, 0.1);
+    EXPECT_NEAR(loaded.getProteinGoalG(), 140.0, 0.1);
+    EXPECT_NEAR(loaded.getCarbGoalG(), 300.0, 0.1);
+    EXPECT_NEAR(loaded.getFatGoalG(), 65.0, 0.1);
     EXPECT_EQ(loaded.getWaterMl(), 500);
     EXPECT_EQ(loaded.getWaterGoalMl(), 3000);
     EXPECT_DOUBLE_EQ(loaded.getWeightKg(), 75.5);
@@ -37,6 +43,9 @@ TEST(SaveStrategyTest, JsonSaveLoad) {
 TEST(SaveStrategyTest, TextSaveLoad) {
     Diary diary;
     diary.setCalorieGoal(2000.0);
+    diary.setProteinGoalG(130.0);
+    diary.setCarbGoalG(260.0);
+    diary.setFatGoalG(68.0);
     Food chicken("Куряче філе", 165, 0, 31, 3.6);
     diary.addMeal(SavedMeal("Обід", chicken, 150.0));
 
@@ -49,6 +58,9 @@ TEST(SaveStrategyTest, TextSaveLoad) {
     ASSERT_TRUE(saver.load(loaded, testFile));
     
     EXPECT_NEAR(loaded.getCalorieGoal(), 2000.0, 0.1);
+    EXPECT_NEAR(loaded.getProteinGoalG(), 130.0, 0.1);
+    EXPECT_NEAR(loaded.getCarbGoalG(), 260.0, 0.1);
+    EXPECT_NEAR(loaded.getFatGoalG(), 68.0, 0.1);
     EXPECT_EQ(loaded.getMealsCount(), 1);
     
     // Cleanup
@@ -61,6 +73,9 @@ TEST(SaveStrategyTest, TextSaveLoad) {
 TEST(SaveStrategyTest, SqliteSaveLoad) {
     Diary diary;
     diary.setCalorieGoal(2200.0);
+    diary.setProteinGoalG(155.0);
+    diary.setCarbGoalG(240.0);
+    diary.setFatGoalG(72.0);
     Food apple("Яблуко", 52, 14, 0.3, 0.2);
     diary.addMeal(SavedMeal("Сніданок", apple, 100.0));
     diary.addWater(750);
@@ -75,6 +90,9 @@ TEST(SaveStrategyTest, SqliteSaveLoad) {
     ASSERT_TRUE(saver.load(loaded, testFile));
     
     EXPECT_NEAR(loaded.getCalorieGoal(), 2200.0, 0.1);
+    EXPECT_NEAR(loaded.getProteinGoalG(), 155.0, 0.1);
+    EXPECT_NEAR(loaded.getCarbGoalG(), 240.0, 0.1);
+    EXPECT_NEAR(loaded.getFatGoalG(), 72.0, 0.1);
     EXPECT_EQ(loaded.getWaterMl(), 750);
     EXPECT_DOUBLE_EQ(loaded.getWeightKg(), 70.0);
     EXPECT_EQ(loaded.getMealsCount(), 1);

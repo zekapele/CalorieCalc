@@ -143,12 +143,25 @@ public:
      */
     double getWeightKg() const;
 
+    /** @brief Денна ціль білку (г) */
+    void setProteinGoalG(double g);
+    double getProteinGoalG() const;
+    /** @brief Денна ціль вуглеводів (г) */
+    void setCarbGoalG(double g);
+    double getCarbGoalG() const;
+    /** @brief Денна ціль жирів (г) */
+    void setFatGoalG(double g);
+    double getFatGoalG() const;
+
 private:
     std::vector<SavedMeal> meals_;
     double calorieGoal_;
     int waterMl_;
     int waterGoalMl_;
     double weightKg_;
+    double proteinGoalG_;
+    double carbGoalG_;
+    double fatGoalG_;
 };
 
 #endif //CALORIECALC_DIARY_H

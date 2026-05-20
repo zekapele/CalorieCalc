@@ -2,6 +2,7 @@
 #define CALORIECALC_OFFLINEASSISTANT_H
 
 #include "Diary.h"
+#include "FoodDatabase.h"
 #include "TrainingDiary.h"
 #include "TrainingPlanGenerator.h"
 #include <string>
@@ -12,7 +13,9 @@ public:
     std::string getRecommendation(const std::string& query,
                                    const Diary& diary,
                                    const TrainingDiary& training,
-                                   const TrainingPreferences& prefs) const;
+                                   const TrainingPreferences& prefs,
+                                   int activityStreakDays = -1,
+                                   const FoodDatabase* foodDb = nullptr) const;
 };
 
 #endif //CALORIECALC_OFFLINEASSISTANT_H

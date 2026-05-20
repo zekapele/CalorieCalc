@@ -10,6 +10,9 @@ TEST(DiaryTest, Constructor) {
     EXPECT_DOUBLE_EQ(diary.getCalorieGoal(), 2000.0);
     EXPECT_EQ(diary.getWaterMl(), 0);
     EXPECT_EQ(diary.getWaterGoalMl(), 2000);
+    EXPECT_DOUBLE_EQ(diary.getProteinGoalG(), 150.0);
+    EXPECT_DOUBLE_EQ(diary.getCarbGoalG(), 250.0);
+    EXPECT_DOUBLE_EQ(diary.getFatGoalG(), 70.0);
 }
 
 TEST(DiaryTest, AddMeal) {
@@ -59,5 +62,15 @@ TEST(DiaryTest, RemainingCalories) {
     Food apple("Яблуко", 52, 14, 0.3, 0.2);
     diary.addMeal(SavedMeal("Сніданок", apple, 100.0));
     EXPECT_NEAR(diary.getRemainingCalories(), 2000.0 - 52.0, 0.1);
+}
+
+TEST(DiaryTest, MacroGoals) {
+    Diary diary;
+    diary.setProteinGoalG(120.0);
+    diary.setCarbGoalG(200.0);
+    diary.setFatGoalG(60.0);
+    EXPECT_DOUBLE_EQ(diary.getProteinGoalG(), 120.0);
+    EXPECT_DOUBLE_EQ(diary.getCarbGoalG(), 200.0);
+    EXPECT_DOUBLE_EQ(diary.getFatGoalG(), 60.0);
 }
 

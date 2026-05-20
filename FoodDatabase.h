@@ -25,6 +25,12 @@ public:
      * @return Вектор знайдених продуктів
      */
     std::vector<Food> searchFoods(const std::string& query) const;
+
+    /**
+     * @brief Пошук у кількох потоках (той самий результат, що searchFoods).
+     * @param threadCount 0 = автоматично за кількістю ядер
+     */
+    std::vector<Food> searchFoodsParallel(const std::string& query, unsigned threadCount = 0) const;
     
     /**
      * @brief Пошук продуктів за категорією

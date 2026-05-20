@@ -2,7 +2,14 @@
 #include <iostream>
 #include <iomanip>
 
-Diary::Diary() : calorieGoal_(2000.0), waterMl_(0), waterGoalMl_(2000), weightKg_(0.0) {
+Diary::Diary()
+    : calorieGoal_(2000.0),
+      waterMl_(0),
+      waterGoalMl_(2000),
+      weightKg_(0.0),
+      proteinGoalG_(150.0),
+      carbGoalG_(250.0),
+      fatGoalG_(70.0) {
 }
 
 void Diary::addMeal(const SavedMeal& meal) {
@@ -74,9 +81,9 @@ void Diary::printDailySummary() const {
     std::cout << "║ Залишок: " << std::setw(23) << getRemainingCalories() << " ккал ║" << std::endl;
     std::cout << "╠════════════════════════════════════╣" << std::endl;
     std::cout << "║ Макроелементи:                    ║" << std::endl;
-    std::cout << "║ Вуглеводи: " << std::setw(21) << getTotalCarbs() << " г ║" << std::endl;
-    std::cout << "║ Білки: " << std::setw(26) << getTotalProtein() << " г ║" << std::endl;
-    std::cout << "║ Жири: " << std::setw(27) << getTotalFat() << " г ║" << std::endl;
+    std::cout << "║ Вуглеводи: " << std::setw(21) << getTotalCarbs() << " / " << carbGoalG_ << " г ║" << std::endl;
+    std::cout << "║ Білки: " << std::setw(26) << getTotalProtein() << " / " << proteinGoalG_ << " г ║" << std::endl;
+    std::cout << "║ Жири: " << std::setw(27) << getTotalFat() << " / " << fatGoalG_ << " г ║" << std::endl;
     std::cout << "╠════════════════════════════════════╣" << std::endl;
     std::cout << "║ Вода: " << std::setw(26) << waterMl_ << " / " << waterGoalMl_ << " мл ║" << std::endl;
     if (weightKg_ > 0.0) {
@@ -138,5 +145,29 @@ void Diary::setWeightKg(double kg) {
 
 double Diary::getWeightKg() const {
     return weightKg_;
+}
+
+void Diary::setProteinGoalG(double g) {
+    if (g >= 0.0) proteinGoalG_ = g;
+}
+
+double Diary::getProteinGoalG() const {
+    return proteinGoalG_;
+}
+
+void Diary::setCarbGoalG(double g) {
+    if (g >= 0.0) carbGoalG_ = g;
+}
+
+double Diary::getCarbGoalG() const {
+    return carbGoalG_;
+}
+
+void Diary::setFatGoalG(double g) {
+    if (g >= 0.0) fatGoalG_ = g;
+}
+
+double Diary::getFatGoalG() const {
+    return fatGoalG_;
 }
 

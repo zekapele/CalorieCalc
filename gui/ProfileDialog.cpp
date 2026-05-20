@@ -1,5 +1,7 @@
 #include "ProfileDialog.h"
+#include "AppStyle.h"
 #include "AuthStore.h"
+#include "ProfileValidation.h"
 
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -12,16 +14,22 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QVBoxLayout>
+#include <QInputDialog>
+#include <QStyle>
 
 ProfileDialog::ProfileDialog(const QString& login, QWidget* parent)
     : QDialog(parent), login_(login) {
     setWindowTitle(tr("Профіль користувача"));
     setModal(true);
-    resize(460, 380);
+    resize(480, 420);
+    AppStyle::styleDialog(this);
 
     auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(20, 20, 20, 16);
+    root->setSpacing(14);
 
     auto* infoLabel = new QLabel(tr("Користувач: %1").arg(login_), this);
+    infoLabel->setObjectName(QStringLiteral("statsHero"));
     root->addWidget(infoLabel);
 
     auto* bodyGroup = new QGroupBox(tr("Персональні дані"), this);
@@ -63,11 +71,23 @@ ProfileDialog::ProfileDialog(const QString& login, QWidget* parent)
     pwdForm->addRow(tr("Повтор нового:"), newPassword2Edit_);
     root->addWidget(pwdGroup);
 
+    auto* dangerGroup = new QGroupBox(tr("Обліковий запис"), this);
+    auto* dangerLay = new QVBoxLayout(dangerGroup);
+    auto* delBtn = new QPushButton(tr("Видалити обліковий запис і локальні дані…"), dangerGroup);
+    delBtn->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
+    AppStyle::markDanger(delBtn);
+    dangerLay->addWidget(new QLabel(
+        tr("Безповоротно: профіль у users.json, пароль і вся папка даних користувача на цьому комп’ютері."), dangerGroup));
+    dangerLay->addWidget(delBtn);
+    root->addWidget(dangerGroup);
+
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
     auto* saveBtn = new QPushButton(tr("Зберегти"), this);
+    AppStyle::markPrimary(saveBtn);
     buttons->addButton(saveBtn, QDialogButtonBox::AcceptRole);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(saveBtn, &QPushButton::clicked, this, &ProfileDialog::onSaveClicked);
+    connect(delBtn, &QPushButton::clicked, this, &ProfileDialog::onDeleteAccountClicked);
     root->addWidget(buttons);
 }
 
@@ -84,6 +104,13 @@ double ProfileDialog::heightCm() const { return heightSpin_->value(); }
 int ProfileDialog::activityIndex() const { return activityCombo_->currentIndex(); }
 
 void ProfileDialog::onSaveClicked() {
+    const QString bodyErr =
+        ProfileValidation::errorForProfileBody(ageYears(), heightCm(), weightKg());
+    if (!bodyErr.isEmpty()) {
+        QMessageBox::warning(this, tr("Профіль"), bodyErr);
+        return;
+    }
+
     const QString cur = currentPasswordEdit_->text();
     const QString np = newPasswordEdit_->text();
     const QString np2 = newPassword2Edit_->text();
@@ -101,6 +128,31 @@ void ProfileDialog::onSaveClicked() {
         }
     }
 
+    accept();
+}
+
+void ProfileDialog::onDeleteAccountClicked() {
+    if (QMessageBox::warning(this,
+                              tr("Видалення облікового запису"),
+                              tr("Усі локальні дані цього користувача буде видалено. Продовжити?"),
+                              QMessageBox::Yes | QMessageBox::No,
+                              QMessageBox::No)
+        != QMessageBox::Yes) {
+        return;
+    }
+    bool ok = false;
+    const QString pwd =
+        QInputDialog::getText(this, tr("Підтвердження"), tr("Введіть пароль облікового запису:"),
+                              QLineEdit::Password, QString(), &ok);
+    if (!ok || pwd.isEmpty()) return;
+
+    QString err;
+    if (!AuthStore::deleteAccount(login_, pwd, &err)) {
+        QMessageBox::warning(this, tr("Помилка"), err);
+        return;
+    }
+    accountDeleted_ = true;
+    QMessageBox::information(this, tr("Готово"), tr("Обліковий запис і локальні дані видалено."));
     accept();
 }
 

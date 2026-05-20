@@ -17,7 +17,7 @@ General Information
 Field	Description
 Description	User starts a workout session. The system generates a personalized training plan and guides the user through exercises.
 Primary Actor	User
-Secondary Actors	Fitness AI App (System)
+Secondary Actors	CalorieCalc (System)
 Preconditions	User has access to the application; application is running; user is logged in (optional)
 
 

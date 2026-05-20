@@ -18,6 +18,9 @@ bool XmlSaveStrategy::save(const Diary& diary, const std::string& filename) cons
     file << "  <water_ml>" << diary.getWaterMl() << "</water_ml>\n";
     file << "  <water_goal_ml>" << diary.getWaterGoalMl() << "</water_goal_ml>\n";
     file << "  <weight_kg>" << diary.getWeightKg() << "</weight_kg>\n";
+    file << "  <protein_goal_g>" << diary.getProteinGoalG() << "</protein_goal_g>\n";
+    file << "  <carb_goal_g>" << diary.getCarbGoalG() << "</carb_goal_g>\n";
+    file << "  <fat_goal_g>" << diary.getFatGoalG() << "</fat_goal_g>\n";
     file << "  <meals>\n";
     
     auto meals = diary.getAllMeals();
@@ -53,6 +56,9 @@ bool XmlSaveStrategy::load(Diary& diary, const std::string& filename) const {
     double goal = 2000.0;
     int water = 0, waterGoal = 2000;
     double weight = 0.0;
+    double proteinGoal = 150.0;
+    double carbGoal = 250.0;
+    double fatGoal = 70.0;
     bool inMeal = false;
     std::string mealName, foodName;
     double amount = 0, calories = 0, carbs = 0, protein = 0, fat = 0;
@@ -74,6 +80,18 @@ bool XmlSaveStrategy::load(Diary& diary, const std::string& filename) const {
             size_t start = line.find(">") + 1;
             size_t end = line.find("<", start);
             weight = std::stod(line.substr(start, end - start));
+        } else if (line.find("<protein_goal_g>") != std::string::npos) {
+            size_t start = line.find(">") + 1;
+            size_t end = line.find("<", start);
+            proteinGoal = std::stod(line.substr(start, end - start));
+        } else if (line.find("<carb_goal_g>") != std::string::npos) {
+            size_t start = line.find(">") + 1;
+            size_t end = line.find("<", start);
+            carbGoal = std::stod(line.substr(start, end - start));
+        } else if (line.find("<fat_goal_g>") != std::string::npos) {
+            size_t start = line.find(">") + 1;
+            size_t end = line.find("<", start);
+            fatGoal = std::stod(line.substr(start, end - start));
         } else if (line.find("<meal>") != std::string::npos) {
             inMeal = true;
         } else if (line.find("</meal>") != std::string::npos) {
@@ -118,6 +136,9 @@ bool XmlSaveStrategy::load(Diary& diary, const std::string& filename) const {
     diary.addWater(water);
     diary.setWaterGoal(waterGoal);
     diary.setWeightKg(weight);
+    diary.setProteinGoalG(proteinGoal);
+    diary.setCarbGoalG(carbGoal);
+    diary.setFatGoalG(fatGoal);
     
     file.close();
     return true;

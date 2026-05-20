@@ -1,36 +1,33 @@
-# Traceability матриця UR/FR → реалізація (Фаза 2)
+# Traceability: UR/FR/NFR → реалізація (актуально після фази 3)
 
-Цей документ допомагає швидко довести відповідність вимогам до поточної реалізації застосунку.
+Матриця відповідності вимог бізнес-аналізу поточному коду та UI **CalorieCalc**.
 
-## Позначення
-- `Повністю` — вимога реалізована в застосунку і підтверджується кодом/інтерфейсом.
-- `Частково` — є наближення або реалізація через обмежений набір даних.
-- `Не реалізовано` — відповідної функціональності в поточній версії немає.
+**Позначення:** ✅ повністю · ◐ частково · ⏳ roadmap
 
-## UR/FR матриця
+| ID | Вимога | Статус | Доказ у проєкті |
+|----|--------|--------|-----------------|
+| **UR-1** | Персональний профіль | ✅ | `AuthStore`, `LoginDialog`, `ProfileDialog`, вік/зріст/вага в `MainWindow` |
+| FR-1.1 | Реєстрація email / Google / Apple | ◐ | Email + пароль; локальний профіль Google/Apple |
+| FR-1.2 | Вік, вага, зріст, ціль | ✅ | `ageSpin_`, `heightSpin_`, `weightSpin_`, `trainingGoalCombo_`, `profile.json` |
+| **UR-2** | План тренувань | ✅ | |
+| FR-2.1 | Генерація плану | ✅ | `TrainingPlanGenerator`, `TrainingPlanWorkflowDialog`, `onGenerateTrainingPlan7Days` |
+| FR-2.2 | Редагування плану | ✅ | «Редагувати план», додати/видалити сесію, майстер, `onStartWorkout` |
+| **UR-3** | Калорії | ✅ | |
+| FR-3.1 | Журнал продуктів | ✅ | `onAddFood`, `onAddCustomFood`, секції дня |
+| FR-3.2 | Підрахунок за день | ✅ | `Diary::getTotalCalories`, `refreshStats` |
+| **UR-4** | Помічник | ✅ | |
+| FR-4.1 | Питання | ✅ | `onAskOfflineAssistant`, `CloudAssistant` (опційно) |
+| FR-4.2 | Рекомендації за даними | ✅ | `OfflineAssistant`, фідбек у діалозі |
+| **UR-5** | Прогрес | ✅ | |
+| FR-5.1 | Статистика | ✅ | Звіти 7 днів, KPI, «Зведення прогресу» |
+| FR-5.2 | Графіки ваги та активності | ✅ | `onShowCharts` (вага, калорії, вода, хвилини тренувань) |
+| **NFR-1** | Відгук ≤2 с | ✅ | `PerfTrace`, `statusBar`, меню **«Перевірка швидкості…»** |
+| **NFR-2** | Масштаб (100k users) | ⏳ | `api/rest_server`, `tools/loadtest/load_api.py` |
+| **NFR-4** | Захист ПД | ✅ | SHA-256, згода, legal, видалення акаунта; тести `tests/test_auth.cpp` |
+| **NFR-5** | iOS / Android | ⏳ | Roadmap; поточна збірка — Qt Desktop |
 
-| ID | Вимога | Статус | Доказ в проєкті (артефакти) | Коментар / прогалина |
-|---|---|---|---|---|
-| UR-1 | Персональний профіль для індивідуальних рекомендацій | Частково | UI-профіль: `MainWindow::profileCombo_`, кеш/збереження: `diaries_`, `trainings_`, файли в `data/<profile>/` через `diaryFilePath()` та `trainingFilePath()` | Є локальні профілі, але немає реєстрації/аккаунтів |
-| FR-1.1 | Реєстрація через email або Google/Apple акаунт | Не реалізовано | У проєкті немає модулів auth/реєстрації; профіль лише локальний селектор (`currentProfile()`) | Вимога про зовнішні акаунти не покрита |
-| FR-1.2 | Вік, вага, зріст, ціль тренувань | Частково | Вага: `weightSpin_` → `Diary::setWeightKg()` + графіки ваги в `onShowCharts()`; Ціль тренувань: `trainingGoalCombo_` → `TrainingPreferences.goal` → `TrainingPlanGenerator` | Вік/зріст відсутні як поля та не впливають на план/рекомендації |
-| UR-2 | Персональний план тренувань | Частково | Генерація: `MainWindow::onGenerateTrainingPlan7Days()` → `TrainingPlanGenerator::generateSessionForDay()`; Редагування: `onAddTraining()`, `onRemoveTraining()`, `onMarkTrainingCompleted()`, `onDuplicateTrainingTomorrow()` | “Персональність” зводиться до цілі тренувань (cutting/bulk/maintenance), без використання віку/зросту |
-| FR-2.1 | Генерація індивідуального плану на основі введених даних | Частково | `TrainingPlanGenerator` детермінує тренування за dayIndex і `TrainingPreferences.goal` (у GUI це задається `trainingGoalCombo_`) | Генератор використовує тільки ціль тренувань; інші персональні дані не зчитуються |
-| FR-2.2 | Зміна/редагування плану | Повністю | Редагування в GUI: `onAddTraining()`, `onRemoveTraining()`, зміна статусу `onMarkTrainingCompleted()`, дублювання `onDuplicateTrainingTomorrow()` | Генерація заповнює лише “порожні” дні (non-destructive) в `onGenerateTrainingPlan7Days()` |
-| UR-3 | Рахувати спожиті калорії | Повністю | Харчування: додавання в Diary (`onAddFood()`, `SavedMeal`); статистика в `refreshStats()`; збереження `saveDiaryFor()` | Базові калорії/макро обчислюються та показуються |
-| FR-3.1 | Додавати продукти до щоденного журналу харчування | Повністю | UI пошук/фільтр: `categoryFilter_` + `onSearch()`; додавання: `onAddFood()` / кастомний продукт: `onAddCustomFood()` | Категорійний фільтр підтриманий через `FoodDatabase::searchByCategory()` |
-| FR-3.2 | Автоматично рахувати загальну кількість калорій за день | Повністю | Обчислення в Diary (візуалізація): `refreshStats()` використовує `diary_.getTotalCalories()`, прогрес до цілі та залишок `getRemainingCalories()` | Підтримується перерахунок після змін |
-| UR-4 | Поради від помічника | Повністю (у межах офлайн-версії) | UI діалог: `MainWindow::onAskOfflineAssistant()`; логіка: `OfflineAssistant::getRecommendation()` | Це офлайн rule-based по ключових словах (“калорії/вода/тренування”), без NLP/мережі |
-| FR-4.1 | Ставити питання помічнику | Повністю | Поле введення/вивід у діалозі: `onAskOfflineAssistant()` + кнопки “Задати (Offline)” | “Онлайн-помічник” — заглушка через `onAskOnlineAssistantPlaceholder()` |
-| FR-4.2 | Рекомендації на основі даних користувача | Повністю (частково за даними) | У `OfflineAssistant::getRecommendation()` використовуються `Diary` (ціль/залишок калорій, вода, вага) та `TrainingDiary` (сумарна тривалість) | Залежність від віку/зросту відсутня (бо даних немає) |
-| UR-5 | Відстежувати прогрес | Частково | KPI/серія активності: `calculateConsistencyStreak()`; калорії/вода: графіки в `onShowCharts()`; вага: графік 30 днів в `onShowCharts()` | “Активність” як графік тренувань по днях не реалізований; є агреговані KPI/список сесій |
-| FR-5.1 | Статистика тренувань і калорій | Повністю | Калорії: `refreshStats()`, тижневий звіт `onShowWeeklyReport()`, графіки `onShowCharts()`; тренування: `refreshTraining()`, KPI `fitnessKpiLabel_`, `calculateConsistencyStreak()` | Є достатньо даних для демонстрації прогресу |
-| FR-5.2 | Графік змін ваги та активності | Частково | Вага: `onShowCharts()` (line chart за 30 днів). Активність: “серія активності” (`calculateConsistencyStreak()`), тренування в списку `trainingsList_` | Немає окремого time-series графіку “тривалість тренувань по днях” |
+**User stories:** [UserStories_WorkoutManagement.md](UserStories_WorkoutManagement.md) (US-W1…US-W5).
 
-## Примітка щодо відповідності “введеним даним”
-У вашому списку FR-2.1 та FR-4.2 фігурує “введені дані користувача”. Поточна реалізація:
-- використовує `trainingGoalCombo_` (goal),
-- використовує калорії/воду/вагу з `Diary`,
-- використовує тривалість з `TrainingDiary`,
-- але не використовує вік/зріст, тому що відповідні поля в UI та моделі `Diary` відсутні.
+**У застосунку:** меню **Довідка → Вимоги UR/FR/NFR (зведення)…** — короткий огляд для захисту.
 
+Повний перелік: [Requirements_UR_FR_NFR.md](Requirements_UR_FR_NFR.md).

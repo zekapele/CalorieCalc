@@ -6,14 +6,18 @@
 #include <QGroupBox>
 #include <QPalette>
 #include <QApplication>
+#include <QClipboard>
 #include <QStyle>
 #include <QFont>
 #include <QFormLayout>
+#include <QGridLayout>
+#include <QStatusBar>
 #include <QMessageBox>
 #include <QFileInfo>
 #include <QDir>
 #include <QDialog>
 #include <QFileDialog>
+#include <QFile>
 #include <QTextStream>
 #include <QStringConverter>
 #include <QTime>
@@ -24,7 +28,9 @@
 #include <QLabel>
 #include <QCheckBox>
 #include <QDialogButtonBox>
+#include <QSignalBlocker>
 #include <algorithm>
+#include <cmath>
 #ifdef QT_CHARTS_LIB
 #include <QChartView>
 #include <QLineSeries>
@@ -40,6 +46,35 @@
 #include <map>
 #include <cctype>
 #include <QTabWidget>
+#include <QMenuBar>
+#include <QStatusBar>
+#include <QDateTime>
+#include "LegalDocuments.h"
+#include "PerfTrace.h"
+#include "TrainingPlanWorkflowDialog.h"
+#include "../BatchDiaryLoader.h"
+#include "../Parallel.h"
+#include "AssistantService.h"
+#include "CloudAssistant.h"
+#include "AppStyle.h"
+#include "ProfileValidation.h"
+#include "AppVersion.h"
+#include "../Logger.h"
+#include <QSettings>
+#include <QStringList>
+
+namespace {
+
+void setListPlaceholder(QListWidget* list, const QString& text) {
+    auto* item = new QListWidgetItem(text, list);
+    item->setFlags(Qt::NoItemFlags);
+    QFont f = item->font();
+    f.setItalic(true);
+    item->setFont(f);
+    item->setForeground(list->palette().color(QPalette::PlaceholderText));
+}
+
+} // namespace
 
 MainWindow::MainWindow(const QString& loggedInLogin, QWidget* parent)
     : QMainWindow(parent),
@@ -49,10 +84,41 @@ MainWindow::MainWindow(const QString& loggedInLogin, QWidget* parent)
 }
 
 void MainWindow::setupUi() {
-    auto* appTabs = new QTabWidget(this);
+    auto* central = new QWidget(this);
+    auto* centralLayout = new QVBoxLayout(central);
+    centralLayout->setContentsMargins(14, 12, 14, 10);
+    centralLayout->setSpacing(12);
+
+    auto* header = new QWidget(central);
+    header->setObjectName(QStringLiteral("appHeader"));
+    auto* headerLay = new QHBoxLayout(header);
+    headerLay->setContentsMargins(20, 14, 20, 14);
+    auto* headerTextCol = new QVBoxLayout();
+    headerTextCol->setSpacing(2);
+    auto* appTitle = new QLabel(QStringLiteral("CalorieCalc"), header);
+    appTitle->setObjectName(QStringLiteral("appTitle"));
+    auto* appSubtitle = new QLabel(tr("Харчування · тренування · прогрес"), header);
+    appSubtitle->setObjectName(QStringLiteral("appSubtitle"));
+    headerTextCol->addWidget(appTitle);
+    headerTextCol->addWidget(appSubtitle);
+    headerLay->addLayout(headerTextCol);
+    headerLay->addStretch();
+    headerDateLabel_ = new QLabel(header);
+    headerDateLabel_->setObjectName(QStringLiteral("headerDate"));
+    headerLay->addWidget(headerDateLabel_);
+    centralLayout->addWidget(header);
+
+    auto* appTabs = new QTabWidget(central);
+    appTabs->setObjectName(QStringLiteral("mainTabs"));
     auto* caloriesPage = new QWidget(appTabs);
+    caloriesPage->setObjectName(QStringLiteral("pageRoot"));
     auto* fitnessPage = new QWidget(appTabs);
-    auto* rootLayout = new QHBoxLayout(caloriesPage);
+    fitnessPage->setObjectName(QStringLiteral("pageRoot"));
+
+    auto* caloriesPageLay = new QVBoxLayout(caloriesPage);
+    caloriesPageLay->setContentsMargins(6, 6, 6, 6);
+    auto* rootLayout = new QHBoxLayout();
+    caloriesPageLay->addLayout(rootLayout);
 
     // Left column (controls)
     auto* leftColumn = new QVBoxLayout();
@@ -73,7 +139,7 @@ void MainWindow::setupUi() {
     profileSettingsBtn_ = new QPushButton(tr("Профіль"), topBox);
     profileRow->addWidget(profileSettingsBtn_);
 
-    auto* userAccountLabel = new QLabel(tr("Обліковий запис: %1").arg(loggedInLogin_), topBox);
+    auto* userAccountLabel = new QLabel(tr("Вітаємо, %1").arg(loggedInLogin_), topBox);
     userAccountLabel->setWordWrap(true);
 
     auto* metricsRow = new QHBoxLayout();
@@ -99,9 +165,11 @@ void MainWindow::setupUi() {
     // Автозбереження метаданих профілю при зміні
     connect(ageSpin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int){
         saveProfileMeta(currentProfile());
+        refreshStats();
     });
     connect(heightSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double){
         saveProfileMeta(currentProfile());
+        refreshStats();
     });
     connect(activityCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int){
         saveProfileMeta(currentProfile());
@@ -227,8 +295,14 @@ void MainWindow::setupUi() {
     auto* tmplRow = new QHBoxLayout();
     saveTemplateBtn_ = new QPushButton(tr("Зберегти як шаблон"), rightBox);
     applyTemplateBtn_ = new QPushButton(tr("Додати шаблон"), rightBox);
+    copyYesterdayBtn_ = new QPushButton(tr("З учора"), rightBox);
+    copyYesterdayBtn_->setToolTip(tr("Скопіювати всі прийоми їжі з попереднього дня в поточний"));
+    repeatLastMealBtn_ = new QPushButton(tr("Повторити останній"), rightBox);
+    repeatLastMealBtn_->setToolTip(tr("Додати ще раз останній записаний прийом їжі"));
     tmplRow->addWidget(saveTemplateBtn_);
     tmplRow->addWidget(applyTemplateBtn_);
+    tmplRow->addWidget(copyYesterdayBtn_);
+    tmplRow->addWidget(repeatLastMealBtn_);
 
     removeButton_ = new QPushButton(tr("Видалити вибране"), rightBox);
     removeButton_->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
@@ -245,6 +319,32 @@ void MainWindow::setupUi() {
     calRow->addWidget(new QLabel(tr("Ціль калорій:"), goalsBox));
     calRow->addWidget(goalSpin_);
 
+    auto* macroRow = new QHBoxLayout();
+    proteinGoalSpin_ = new QSpinBox(goalsBox);
+    proteinGoalSpin_->setRange(0, 400);
+    proteinGoalSpin_->setValue(150);
+    proteinGoalSpin_->setSuffix(tr(" г"));
+    carbGoalSpin_ = new QSpinBox(goalsBox);
+    carbGoalSpin_->setRange(0, 600);
+    carbGoalSpin_->setValue(250);
+    carbGoalSpin_->setSuffix(tr(" г"));
+    fatGoalSpin_ = new QSpinBox(goalsBox);
+    fatGoalSpin_->setRange(0, 200);
+    fatGoalSpin_->setValue(70);
+    fatGoalSpin_->setSuffix(tr(" г"));
+    macroRow->addWidget(new QLabel(tr("Ціль білку:"), goalsBox));
+    macroRow->addWidget(proteinGoalSpin_);
+    macroRow->addSpacing(8);
+    macroRow->addWidget(new QLabel(tr("Вугл.:"), goalsBox));
+    macroRow->addWidget(carbGoalSpin_);
+    macroRow->addSpacing(8);
+    macroRow->addWidget(new QLabel(tr("Жири:"), goalsBox));
+    macroRow->addWidget(fatGoalSpin_);
+    macroRow->addStretch();
+    resetMacroDefaultsBtn_ = new QPushButton(tr("Типові БЖВ"), goalsBox);
+    resetMacroDefaultsBtn_->setToolTip(tr("Цілі білок / вуглеводи / жири: 150 / 250 / 70 г"));
+    macroRow->addWidget(resetMacroDefaultsBtn_);
+
     caloriesProgress_ = new QProgressBar(goalsBox);
     caloriesProgress_->setRange(0, 100);
 
@@ -255,6 +355,8 @@ void MainWindow::setupUi() {
     waterAddSpin_->setValue(250);
     waterAddSpin_->setSuffix(" мл");
     waterAddBtn_ = new QPushButton(tr("Випити"), goalsBox);
+    waterQuick250Btn_ = new QPushButton(tr("+250 мл"), goalsBox);
+    waterQuick500Btn_ = new QPushButton(tr("+500 мл"), goalsBox);
     waterGoalSpin_ = new QSpinBox(goalsBox);
     waterGoalSpin_->setRange(0, 10000);
     waterGoalSpin_->setSingleStep(100);
@@ -263,6 +365,8 @@ void MainWindow::setupUi() {
     waterRow->addWidget(new QLabel(tr("Вода:"), goalsBox));
     waterRow->addWidget(waterAddSpin_);
     waterRow->addWidget(waterAddBtn_);
+    waterRow->addWidget(waterQuick250Btn_);
+    waterRow->addWidget(waterQuick500Btn_);
     waterRow->addSpacing(8);
     waterRow->addWidget(new QLabel(tr("Ціль води:"), goalsBox));
     waterRow->addWidget(waterGoalSpin_);
@@ -277,21 +381,50 @@ void MainWindow::setupUi() {
     weightSpin_->setSuffix(" кг");
     weightRow->addWidget(new QLabel(tr("Вага:"), goalsBox));
     weightRow->addWidget(weightSpin_);
+    bmiLabel_ = new QLabel(goalsBox);
+    bmiLabel_->setToolTip(tr("Індекс маси тіла за поточною вагою та зростом зверху"));
+    weightRow->addSpacing(12);
+    weightRow->addWidget(bmiLabel_);
 
     caloriesLabel_ = new QLabel(goalsBox);
+    caloriesLabel_->setObjectName(QStringLiteral("statsHero"));
+    caloriesLabel_->setWordWrap(true);
     macrosLabel_ = new QLabel(goalsBox);
+    macrosLabel_->setObjectName(QStringLiteral("mutedHint"));
+
+    auto* macroBarsRow = new QHBoxLayout();
+    macroProteinProgress_ = new QProgressBar(goalsBox);
+    macroProteinProgress_->setRange(0, 100);
+    macroProteinProgress_->setFormat(tr("Б %p%"));
+    macroProteinProgress_->setMaximumHeight(22);
+    macroCarbProgress_ = new QProgressBar(goalsBox);
+    macroCarbProgress_->setRange(0, 100);
+    macroCarbProgress_->setFormat(tr("В %p%"));
+    macroCarbProgress_->setMaximumHeight(22);
+    macroFatProgress_ = new QProgressBar(goalsBox);
+    macroFatProgress_->setRange(0, 100);
+    macroFatProgress_->setFormat(tr("Ж %p%"));
+    macroFatProgress_->setMaximumHeight(22);
+    macroBarsRow->addWidget(macroProteinProgress_);
+    macroBarsRow->addWidget(macroCarbProgress_);
+    macroBarsRow->addWidget(macroFatProgress_);
 
     goalsLayout->addLayout(calRow);
+    goalsLayout->addLayout(macroRow);
     goalsLayout->addWidget(caloriesProgress_);
     goalsLayout->addLayout(waterRow);
     goalsLayout->addWidget(waterProgress_);
     goalsLayout->addLayout(weightRow);
     goalsLayout->addWidget(caloriesLabel_);
     goalsLayout->addWidget(macrosLabel_);
+    goalsLayout->addLayout(macroBarsRow);
 
     // Weekly report and actions
     weeklyReportBtn_ = new QPushButton(tr("Звіт за 7 днів"), rightBox);
-    
+    copyDaySummaryBtn_ = new QPushButton(tr("Копіювати підсумок дня"), rightBox);
+    copyDaySummaryBtn_->setToolTip(
+        tr("Дата, профіль, калорії та макроси, вода, вага, кількість прийомів — у буфер обміну"));
+
     auto* actionsRow = new QHBoxLayout();
     themeToggleBtn_ = new QPushButton(tr("☀ Світла тема"), rightBox);
     exportCSVBtn_ = new QPushButton(tr("Експорт CSV"), rightBox);
@@ -299,6 +432,7 @@ void MainWindow::setupUi() {
     exportPDFBtn_ = new QPushButton(tr("Експорт PDF"), rightBox);
     chartsBtn_ = new QPushButton(tr("Графіки"), rightBox);
     assistantBtn_ = new QPushButton(tr("Помічник"), fitnessPage);
+    assistantBtn_->setToolTip(tr("Рекомендації на основі щоденника харчування та тренувань."));
     actionsRow->addWidget(themeToggleBtn_);
     actionsRow->addWidget(exportCSVBtn_);
     actionsRow->addWidget(importCSVBtn_);
@@ -322,7 +456,9 @@ void MainWindow::setupUi() {
     trainingGoalCombo_->addItems({tr("Схуднення"), tr("Набір"), tr("Підтримка")});
     trainingGoalCombo_->setCurrentIndex(2); // maintenance
 
-    generatePlanBtn_ = new QPushButton(tr("Автоплан (7 днів)"), trainingBox_);
+    generatePlanBtn_ = new QPushButton(tr("План на 7 днів"), trainingBox_);
+    generatePlanBtn_->setToolTip(
+        tr("Персональний план: перевірка даних, перегляд, корекція та збереження на тиждень."));
     goalRow->addWidget(new QLabel(tr("Ціль:"), trainingBox_));
     goalRow->addWidget(trainingGoalCombo_);
     goalRow->addWidget(generatePlanBtn_);
@@ -362,7 +498,10 @@ void MainWindow::setupUi() {
     addTrainingBtn_ = new QPushButton(tr("Додати тренування"), trainingBox_);
     removeTrainingBtn_ = new QPushButton(tr("Видалити вибране"), trainingBox_);
     removeTrainingBtn_->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
+    editTrainingBtn_ = new QPushButton(tr("Редагувати план"), trainingBox_);
+    editTrainingBtn_->setToolTip(tr("Змінити тип, час, тривалість або статус обраної сесії"));
     trainingBtnRow->addWidget(addTrainingBtn_);
+    trainingBtnRow->addWidget(editTrainingBtn_);
     trainingBtnRow->addWidget(removeTrainingBtn_);
     trainingLayout->addLayout(trainingBtnRow);
 
@@ -374,6 +513,7 @@ void MainWindow::setupUi() {
     trainingLayout->addWidget(trainingSummaryLabel_);
 
     rightLayout->addWidget(weeklyReportBtn_);
+    rightLayout->addWidget(copyDaySummaryBtn_);
     rightLayout->addLayout(actionsRow);
     rightBox->setLayout(rightLayout);
 
@@ -392,8 +532,11 @@ void MainWindow::setupUi() {
     rootLayout->addWidget(leftScroll, 1);
     rootLayout->addWidget(rightScroll, 1);
     auto* fitnessLayout = new QVBoxLayout(fitnessPage);
+    fitnessLayout->setContentsMargins(12, 12, 12, 12);
+    fitnessLayout->setSpacing(14);
 
-    auto* fitnessSummaryBox = new QGroupBox(tr("Фітнес-дашборд"), fitnessPage);
+    auto* fitnessSummaryBox = new QGroupBox(tr("Фітнес-дашборд та прогрес"), fitnessPage);
+    fitnessSummaryBox->setObjectName(QStringLiteral("heroCard"));
     auto* fitnessSummaryLayout = new QVBoxLayout(fitnessSummaryBox);
     fitnessKpiLabel_ = new QLabel(fitnessSummaryBox);
     fitnessKpiLabel_->setObjectName("fitnessKpiLabel");
@@ -405,27 +548,93 @@ void MainWindow::setupUi() {
     fitnessSummaryLayout->addWidget(tipLabel_);
     fitnessSummaryLayout->addWidget(dailyTipBtn_);
 
-    auto* trainingQuickActions = new QHBoxLayout();
-    startWorkoutBtn_ = new QPushButton(tr("Start workout"), fitnessPage);
-    quickStartWorkoutBtn_ = new QPushButton(tr("Quick start"), fitnessPage);
-    markCompletedBtn_ = new QPushButton(tr("Позначити як виконано"), fitnessPage);
-    duplicateTomorrowBtn_ = new QPushButton(tr("Дублювати на завтра"), fitnessPage);
-    trainingWeeklyReportBtn_ = new QPushButton(tr("Звіт тренувань (7 днів)"), fitnessPage);
-    trainingQuickActions->addWidget(startWorkoutBtn_);
-    trainingQuickActions->addWidget(quickStartWorkoutBtn_);
-    trainingQuickActions->addWidget(markCompletedBtn_);
-    trainingQuickActions->addWidget(duplicateTomorrowBtn_);
-    trainingQuickActions->addWidget(trainingWeeklyReportBtn_);
+    auto* quickActionsBox = new QGroupBox(tr("Швидкі дії"), fitnessPage);
+    auto* trainingQuickActions = new QGridLayout(quickActionsBox);
+    trainingQuickActions->setHorizontalSpacing(10);
+    trainingQuickActions->setVerticalSpacing(10);
+    startWorkoutBtn_ = new QPushButton(tr("Почати тренування"), quickActionsBox);
+    quickStartWorkoutBtn_ = new QPushButton(tr("Швидкий старт"), quickActionsBox);
+    completeWorkoutBtn_ = new QPushButton(tr("Завершити тренування"), quickActionsBox);
+    completeWorkoutBtn_->setToolTip(tr("Завершити активну сесію тренування"));
+    markCompletedBtn_ = new QPushButton(tr("Позначити як виконано"), quickActionsBox);
+    duplicateTomorrowBtn_ = new QPushButton(tr("Дублювати на завтра"), quickActionsBox);
+    trainingWeeklyReportBtn_ = new QPushButton(tr("Звіт тренувань (7 днів)"), quickActionsBox);
+    exportTrainingCSVBtn_ = new QPushButton(tr("Експорт тренувань CSV"), quickActionsBox);
+    exportTrainingPdfBtn_ = new QPushButton(tr("Експорт тренувань PDF"), quickActionsBox);
+    exportTrainingPdfBtn_->setToolTip(tr("Звіт по сесіях за 60 днів (як CSV), у форматі PDF"));
+    progressOverviewBtn_ = new QPushButton(tr("Зведення прогресу"), quickActionsBox);
+    progressOverviewBtn_->setToolTip(tr("Короткий огляд серії, виконаних сесій і рівня адаптації плану"));
+    trainingQuickActions->addWidget(startWorkoutBtn_, 0, 0);
+    trainingQuickActions->addWidget(quickStartWorkoutBtn_, 0, 1);
+    trainingQuickActions->addWidget(completeWorkoutBtn_, 0, 2);
+    trainingQuickActions->addWidget(markCompletedBtn_, 1, 0);
+    trainingQuickActions->addWidget(duplicateTomorrowBtn_, 1, 1);
+    trainingQuickActions->addWidget(trainingWeeklyReportBtn_, 1, 2);
+    trainingQuickActions->addWidget(exportTrainingCSVBtn_, 2, 0);
+    trainingQuickActions->addWidget(exportTrainingPdfBtn_, 2, 1);
+    trainingQuickActions->addWidget(progressOverviewBtn_, 2, 2);
 
     fitnessLayout->addWidget(fitnessSummaryBox);
-    fitnessLayout->addWidget(trainingBox_);
-    fitnessLayout->addLayout(trainingQuickActions);
+    fitnessLayout->addWidget(trainingBox_, 1);
+    fitnessLayout->addWidget(quickActionsBox);
     fitnessLayout->addWidget(assistantBtn_);
     fitnessLayout->addStretch();
 
-    appTabs->addTab(caloriesPage, tr("Калькулятор калорій"));
-    appTabs->addTab(fitnessPage, tr("Фітнес"));
-    setCentralWidget(appTabs);
+    AppStyle::markPrimary(addButton_);
+    AppStyle::markPrimary(startWorkoutBtn_);
+    AppStyle::markAccent(generatePlanBtn_);
+    AppStyle::markAccent(assistantBtn_);
+    AppStyle::markAccent(quickStartWorkoutBtn_);
+    AppStyle::markDanger(removeButton_);
+    AppStyle::markDanger(removeTrainingBtn_);
+
+    appTabs->addTab(caloriesPage, style()->standardIcon(QStyle::SP_FileDialogListView), tr("Харчування"));
+    appTabs->addTab(fitnessPage, style()->standardIcon(QStyle::SP_ArrowRight), tr("Фітнес"));
+
+    auto* menuHelp = menuBar()->addMenu(tr("Довідка"));
+    menuHelp->addAction(tr("Умови використання…"), this, [this] {
+        showLegalDocument(this, LegalDocumentKind::TermsOfService);
+    });
+    menuHelp->addAction(tr("Політика конфіденційності…"), this, [this] {
+        showLegalDocument(this, LegalDocumentKind::PrivacyPolicy);
+    });
+    menuHelp->addSeparator();
+    menuHelp->addAction(tr("Швидкий старт…"), this, [this] {
+        QMessageBox::information(
+            this,
+            tr("Швидкий старт"),
+            tr("1) Оберіть дату в календарі.\n"
+               "2) Додайте прийоми їжі з пошуку продуктів.\n"
+               "3) Налаштуйте цілі калорій і макросів.\n"
+               "4) На вкладці «Фітнес» додайте тренування або згенеруйте план на 7 днів.\n"
+               "5) Експорт CSV/PDF — у нижній панелі."));
+    });
+    menuHelp->addAction(tr("Вимоги UR/FR/NFR (зведення)…"), this, &MainWindow::onShowUrFrNfrSummary);
+    menuHelp->addSeparator();
+    menuHelp->addAction(tr("Продуктивність (локальний MVP)…"), this, [this] {
+        QMessageBox::information(
+            this,
+            tr("Продуктивність"),
+            tr("У десктопній версії дані зберігаються локально; типові дії (день, пошук, збереження) розраховані "
+               "на швидку відповідь на звичайному ПК. Під час великих експортів інтерфейс періодично оновлюється, "
+               "щоб уникнути зависань.\n\n"
+               "NFR-1 (відгук ≤2 с): меню «Перевірка швидкості…».\n"
+               "NFR-2 (масштаб): REST API + tools/loadtest/load_api.py (roadmap production)."));
+    });
+    menuHelp->addAction(tr("Перевірка швидкості…"), this, &MainWindow::onNfrSelfCheck);
+    menuHelp->addAction(tr("Паралельні обчислення…"), this, &MainWindow::onParallelComputeBenchmark);
+    menuHelp->addSeparator();
+    menuHelp->addAction(tr("Про CalorieCalc…"), this, &MainWindow::onShowProductAbout);
+    menuHelp->addAction(tr("Бачення продукту…"), this, &MainWindow::onShowProductVisionAbout);
+
+    centralLayout->addWidget(appTabs, 1);
+    setCentralWidget(central);
+    statusBar()->setSizeGripEnabled(true);
+
+    assistantModeBadge_ = new QLabel(this);
+    assistantModeBadge_->setObjectName(QStringLiteral("assistantModeBadge"));
+    statusBar()->addPermanentWidget(assistantModeBadge_);
+    updateAssistantModeIndicator();
 
     // Signals
     connect(searchBtn, &QPushButton::clicked, this, &MainWindow::onSearch);
@@ -433,16 +642,25 @@ void MainWindow::setupUi() {
     connect(addButton_, &QPushButton::clicked, this, &MainWindow::onAddFood);
     connect(removeButton_, &QPushButton::clicked, this, &MainWindow::onRemoveMeal);
     connect(goalSpin_, &QSpinBox::valueChanged, this, &MainWindow::onSetGoal);
+    connect(proteinGoalSpin_, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::onSetProteinGoal);
+    connect(carbGoalSpin_, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::onSetCarbGoal);
+    connect(fatGoalSpin_, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::onSetFatGoal);
     connect(customAddButton_, &QPushButton::clicked, this, &MainWindow::onAddCustomFood);
     connect(saveTemplateBtn_, &QPushButton::clicked, this, &MainWindow::onSaveTemplate);
     connect(applyTemplateBtn_, &QPushButton::clicked, this, &MainWindow::onApplyTemplate);
+    connect(copyYesterdayBtn_, &QPushButton::clicked, this, &MainWindow::onCopyYesterdayMeals);
+    connect(repeatLastMealBtn_, &QPushButton::clicked, this, &MainWindow::onRepeatLastMeal);
     connect(calendar_, &QCalendarWidget::clicked, this, &MainWindow::onDateChanged);
     connect(profileCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, &MainWindow::onProfileChanged);
     connect(profileSettingsBtn_, &QPushButton::clicked, this, &MainWindow::onOpenProfileDialog);
     connect(waterAddBtn_, &QPushButton::clicked, this, &MainWindow::onAddWater);
+    connect(waterQuick250Btn_, &QPushButton::clicked, this, &MainWindow::onWaterQuick250);
+    connect(waterQuick500Btn_, &QPushButton::clicked, this, &MainWindow::onWaterQuick500);
     connect(waterGoalSpin_, qOverload<int>(&QSpinBox::valueChanged), this, &MainWindow::onSetWaterGoal);
     connect(weightSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, &MainWindow::onSetWeight);
     connect(weeklyReportBtn_, &QPushButton::clicked, this, &MainWindow::onShowWeeklyReport);
+    connect(copyDaySummaryBtn_, &QPushButton::clicked, this, &MainWindow::onCopyDaySummaryToClipboard);
+    connect(resetMacroDefaultsBtn_, &QPushButton::clicked, this, &MainWindow::onResetMacroGoalsToDefaults);
     connect(themeToggleBtn_, &QPushButton::clicked, this, &MainWindow::onToggleTheme);
     connect(exportCSVBtn_, &QPushButton::clicked, this, &MainWindow::onExportCSV);
     connect(importCSVBtn_, &QPushButton::clicked, this, &MainWindow::onImportCSV);
@@ -451,14 +669,20 @@ void MainWindow::setupUi() {
 
     connect(addTrainingBtn_, &QPushButton::clicked, this, &MainWindow::onAddTraining);
     connect(removeTrainingBtn_, &QPushButton::clicked, this, &MainWindow::onRemoveTraining);
+    connect(editTrainingBtn_, &QPushButton::clicked, this, &MainWindow::onEditSelectedTraining);
+    connect(trainingsList_, &QListWidget::itemDoubleClicked, this, &MainWindow::onEditSelectedTraining);
     connect(generatePlanBtn_, &QPushButton::clicked, this, &MainWindow::onGenerateTrainingPlan7Days);
     connect(assistantBtn_, &QPushButton::clicked, this, &MainWindow::onAskOfflineAssistant);
     connect(markCompletedBtn_, &QPushButton::clicked, this, &MainWindow::onMarkTrainingCompleted);
     connect(duplicateTomorrowBtn_, &QPushButton::clicked, this, &MainWindow::onDuplicateTrainingTomorrow);
     connect(dailyTipBtn_, &QPushButton::clicked, this, &MainWindow::onShowDailyTip);
     connect(trainingWeeklyReportBtn_, &QPushButton::clicked, this, &MainWindow::onShowTrainingWeeklyReport);
+    connect(exportTrainingCSVBtn_, &QPushButton::clicked, this, &MainWindow::onExportTrainingCSV);
+    connect(exportTrainingPdfBtn_, &QPushButton::clicked, this, &MainWindow::onExportTrainingPDF);
+    connect(progressOverviewBtn_, &QPushButton::clicked, this, &MainWindow::onShowProgressOverview);
     connect(startWorkoutBtn_, &QPushButton::clicked, this, &MainWindow::onStartWorkout);
     connect(quickStartWorkoutBtn_, &QPushButton::clicked, this, &MainWindow::onQuickStartWorkout);
+    connect(completeWorkoutBtn_, &QPushButton::clicked, this, &MainWindow::onCompleteWorkout);
 
     // Init storage
     ensureStorageDirs();
@@ -473,9 +697,37 @@ void MainWindow::setupUi() {
     refreshStats();
     refreshTraining();
     onShowDailyTip();
-    
-    // Apply initial theme
-    applyLightTheme();
+
+    applyTheme(QSettings().value(QStringLiteral("ui/darkTheme"), true).toBool());
+    updateAppChrome();
+}
+
+void MainWindow::updateAppChrome() {
+    if (headerDateLabel_) {
+        headerDateLabel_->setText(
+            QLocale().toString(selectedDate_, QLocale::LongFormat));
+    }
+    if (statusBar()) {
+        statusBar()->showMessage(
+            tr("Профіль: %1  ·  Обраний день: %2")
+                .arg(currentProfile())
+                .arg(selectedDate_.toString(QStringLiteral("dd.MM.yyyy"))));
+    }
+    updateAssistantModeIndicator();
+}
+
+void MainWindow::updateAssistantModeIndicator() {
+    if (!assistantModeBadge_) return;
+    if (CloudAssistant::isConfigured()) {
+        assistantModeBadge_->setText(tr("Помічник: хмара + локальний резерв"));
+        assistantModeBadge_->setToolTip(
+            tr("Задано API-ключ (CALORIECALC_API_KEY або OPENAI_API_KEY). "
+               "Відповіді спочатку з хмари; при помилці — локальна логіка."));
+    } else {
+        assistantModeBadge_->setText(tr("Помічник: лише локально"));
+        assistantModeBadge_->setToolTip(
+            tr("Без API-ключа використовується лише офлайн-помічник (база продуктів і правила)."));
+    }
 }
 
 void MainWindow::applyDarkTheme() {
@@ -488,96 +740,11 @@ void MainWindow::applyLightTheme() {
 
 void MainWindow::applyTheme(bool dark) {
     isDarkTheme_ = dark;
-    themeToggleBtn_->setText(dark ? tr("☀ Світла тема") : tr("🌙 Темна тема"));
-    
-    if (dark) {
-        // New dark palette: violet + mint accent
-        const QColor bgMain(20, 16, 28);
-        const QColor bgPanel(31, 24, 42);
-        const QColor bgAlt(41, 32, 56);
-        const QColor textMain(238, 235, 245);
-        const QColor accent(139, 233, 193);
-        const QColor border(67, 53, 88);
-
-        QPalette pal = qApp->palette();
-        pal.setColor(QPalette::Window, bgMain);
-        pal.setColor(QPalette::Base, bgPanel);
-        pal.setColor(QPalette::AlternateBase, bgAlt);
-        pal.setColor(QPalette::Text, textMain);
-        pal.setColor(QPalette::WindowText, textMain);
-        pal.setColor(QPalette::Button, bgPanel);
-        pal.setColor(QPalette::ButtonText, textMain);
-        pal.setColor(QPalette::Highlight, accent);
-        pal.setColor(QPalette::HighlightedText, QColor(20, 16, 28));
-        qApp->setPalette(pal);
-
-        qApp->setStyleSheet(
-            "QMainWindow { background-color: #12121A; }"
-            "QGroupBox { font-weight: 600; border: 1px solid #32324A; border-radius: 14px; margin-top: 14px; padding: 10px 10px 12px 10px; color: #F3F4FF; background: #1A1B27; }"
-            "QGroupBox::title { padding: 0 10px; color: #7CE7C9; subcontrol-origin: margin; subcontrol-position: top left; }"
-            "QPushButton { background: #2A2D42; color: #F3F4FF; padding: 9px 16px; border: 1px solid #3B3F5C; border-radius: 11px; font-weight: 600; }"
-            "QPushButton:hover { background: #333754; border-color: #7CE7C9; }"
-            "QPushButton:pressed { background: #23263A; }"
-            "QLineEdit, QSpinBox, QComboBox, QDoubleSpinBox, QTimeEdit, QPlainTextEdit { padding: 8px 12px; border: 1px solid #3B3F5C; border-radius: 10px; background: #171925; color: #F3F4FF; selection-background-color: #7CE7C9; selection-color: #101218; }"
-            "QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QDoubleSpinBox:focus, QTimeEdit:focus, QPlainTextEdit:focus { border: 2px solid #7CE7C9; background: #1D2030; }"
-            "QListWidget { background: #171925; border: 1px solid #3B3F5C; border-radius: 10px; color: #F3F4FF; }"
-            "QListWidget::item { padding: 7px; border-radius: 6px; }"
-            "QListWidget::item:selected { background: #7CE7C9; color: #101218; }"
-            "QListWidget::item:hover { background: #2A2E45; }"
-            "QTabBar::tab { background: #202338; color: #A9AFD1; padding: 10px 18px; border-top-left-radius: 10px; border-top-right-radius: 10px; margin-right: 3px; border: 1px solid #343854; border-bottom: none; }"
-            "QTabBar::tab:selected { background: #181B2B; color: #7CE7C9; border-bottom: 2px solid #7CE7C9; font-weight: 700; }"
-            "QTabBar::tab:hover:!selected { background: #2A2E45; color: #E3E7FF; }"
-            "QTabWidget::pane { border: 1px solid #343854; border-radius: 10px; top: -1px; background: #171925; }"
-            "QLabel { color: #F0F2FF; }"
-            "QCalendarWidget { background-color: #171925; color: #F0F2FF; border: 1px solid #343854; border-radius: 10px; }"
-            "QCalendarWidget QAbstractItemView:enabled { selection-background-color: #7CE7C9; selection-color: #101218; background-color: #171925; }"
-            "QCalendarWidget QHeaderView::section { background-color: #21253A; color: #F0F2FF; border: none; padding: 7px; }"
-            "QProgressBar { border: 1px solid #343854; border-radius: 10px; background: #171925; color: #EAF2FF; text-align: center; height: 20px; }"
-            "QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7CE7C9, stop:1 #69B9FF); border-radius: 10px; }"
-            "QLabel#fitnessKpiLabel { font-size: 14px; font-weight: 700; color: #7CE7C9; padding: 8px; background: #21253A; border: 1px solid #343854; border-radius: 10px; }"
-            "QLabel#tipLabel { color: #EAFDF7; background: #202738; border-left: 3px solid #7CE7C9; padding: 9px; border-radius: 10px; }"
-        );
-    } else {
-        // New light palette: lavender + mint accent
-        QPalette pal = qApp->palette();
-        pal.setColor(QPalette::Window, QColor(248, 246, 255));
-        pal.setColor(QPalette::Base, QColor(255, 255, 255));
-        pal.setColor(QPalette::AlternateBase, QColor(245, 242, 255));
-        pal.setColor(QPalette::Text, QColor(41, 31, 59));
-        pal.setColor(QPalette::WindowText, QColor(41, 31, 59));
-        pal.setColor(QPalette::Button, QColor(244, 239, 255));
-        pal.setColor(QPalette::ButtonText, QColor(41, 31, 59));
-        pal.setColor(QPalette::Highlight, QColor(52, 211, 153));
-        pal.setColor(QPalette::HighlightedText, Qt::white);
-        qApp->setPalette(pal);
-
-        qApp->setStyleSheet(
-            "QMainWindow { background-color: #F3F5FB; }"
-            "QGroupBox { font-weight: 600; border: 1px solid #D7DDEB; border-radius: 14px; margin-top: 14px; padding: 10px 10px 12px 10px; color: #1F2638; background: #FFFFFF; }"
-            "QGroupBox::title { padding: 0 10px; color: #4A6CF7; subcontrol-origin: margin; subcontrol-position: top left; }"
-            "QPushButton { background: #EEF3FF; color: #1F2638; padding: 9px 16px; border: 1px solid #CDD8F6; border-radius: 11px; font-weight: 600; }"
-            "QPushButton:hover { background: #E4ECFF; border-color: #4A6CF7; color: #193A91; }"
-            "QPushButton:pressed { background: #D9E5FF; }"
-            "QLineEdit, QSpinBox, QComboBox, QDoubleSpinBox, QTimeEdit, QPlainTextEdit { padding: 8px 12px; border: 1px solid #D1D9EA; border-radius: 10px; background: #FFFFFF; color: #1F2638; selection-background-color: #4A6CF7; selection-color: #FFFFFF; }"
-            "QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QDoubleSpinBox:focus, QTimeEdit:focus, QPlainTextEdit:focus { border: 2px solid #4A6CF7; background: #FBFCFF; }"
-            "QListWidget { background: #FFFFFF; border: 1px solid #D7DDEB; border-radius: 10px; color: #1F2638; }"
-            "QListWidget::item { padding: 7px; border-radius: 6px; }"
-            "QListWidget::item:selected { background: #4A6CF7; color: #FFFFFF; }"
-            "QListWidget::item:hover { background: #F2F6FF; }"
-            "QTabBar::tab { background: #EAF0FF; color: #5A6788; padding: 10px 18px; border-top-left-radius: 10px; border-top-right-radius: 10px; margin-right: 3px; border: 1px solid #D4DCEF; border-bottom: none; }"
-            "QTabBar::tab:selected { background: #FFFFFF; color: #2746C6; border-bottom: 2px solid #4A6CF7; font-weight: 700; }"
-            "QTabBar::tab:hover:!selected { background: #DFE9FF; color: #3A4A76; }"
-            "QTabWidget::pane { border: 1px solid #D4DCEF; border-radius: 10px; top: -1px; background: #FFFFFF; }"
-            "QLabel { color: #1F2638; }"
-            "QCalendarWidget { background-color: #FFFFFF; color: #1F2638; border: 1px solid #D4DCEF; border-radius: 10px; }"
-            "QCalendarWidget QAbstractItemView:enabled { selection-background-color: #4A6CF7; selection-color: #FFFFFF; background-color: #FFFFFF; }"
-            "QCalendarWidget QHeaderView::section { background-color: #EEF3FF; color: #1F2638; border: none; padding: 7px; }"
-            "QProgressBar { border: 1px solid #D4DCEF; border-radius: 10px; background: #EEF2FA; color: #1F2638; text-align: center; height: 20px; }"
-            "QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4A6CF7, stop:1 #45D3B1); border-radius: 10px; }"
-            "QLabel#fitnessKpiLabel { font-size: 14px; font-weight: 700; color: #2746C6; padding: 8px; background: #EEF3FF; border: 1px solid #D4DCEF; border-radius: 10px; }"
-            "QLabel#tipLabel { color: #1B4B44; background: #EAFBF6; border-left: 3px solid #45D3B1; padding: 9px; border-radius: 10px; }"
-        );
+    if (themeToggleBtn_) {
+        themeToggleBtn_->setText(dark ? tr("☀ Світла тема") : tr("🌙 Темна тема"));
     }
+    AppStyle::applyTheme(qApp, dark);
+    QSettings().setValue(QStringLiteral("ui/darkTheme"), dark);
 }
 
 QString MainWindow::currentProfile() const {
@@ -636,7 +803,48 @@ void MainWindow::saveDiaryFor(const QString& profile, const QDate& date) {
     diaries_[profile][date] = diary_;
     ensureStorageDirs();
     const QString path = diaryFilePath(profile, date);
-    jsonSaver_.save(diary_, path.toStdString());
+    if (!jsonSaver_.save(diary_, path.toStdString())) {
+        LOG_ERROR(std::string("Failed to save diary: ") + path.toStdString());
+        if (statusBar()) {
+            statusBar()->showMessage(tr("Не вдалося зберегти щоденник харчування"), 6000);
+        }
+    }
+}
+
+QVector<Diary> MainWindow::loadDiariesForDates(const QVector<QDate>& days) const {
+    QVector<Diary> result(days.size());
+    const QString profile = currentProfile();
+
+    std::vector<BatchDiaryLoader::Job> jobs;
+    jobs.reserve(static_cast<size_t>(days.size()));
+
+    for (int i = 0; i < days.size(); ++i) {
+        const QDate& day = days[i];
+        if (day == selectedDate_) {
+            result[i] = diary_;
+            continue;
+        }
+        if (diaries_.contains(profile) && diaries_[profile].contains(day)) {
+            result[i] = diaries_[profile].value(day);
+            continue;
+        }
+        BatchDiaryLoader::Job job;
+        job.index = static_cast<size_t>(i);
+        job.filePath = diaryFilePath(profile, day).toStdString();
+        jobs.push_back(std::move(job));
+        result[i] = Diary();
+        result[i].setCalorieGoal(2000);
+    }
+
+    if (!jobs.empty()) {
+        const auto loaded = BatchDiaryLoader::loadAll(jobs, jsonSaver_);
+        for (const auto& r : loaded) {
+            if (r.loaded && r.index < static_cast<size_t>(result.size())) {
+                result[static_cast<int>(r.index)] = r.diary;
+            }
+        }
+    }
+    return result;
 }
 
 QString MainWindow::trainingFilePath(const QString& profile, const QDate& date) const {
@@ -757,6 +965,35 @@ double MainWindow::estimateCalorieGoalFromProfile() const {
     return std::clamp(rounded, 1400.0, 4000.0);
 }
 
+void MainWindow::appendAssistantFeedback(const QString& query,
+                                         const QString& response,
+                                         const QString& verdict,
+                                         const QString& comment) {
+    auto esc = [](const QString& s) -> QString {
+        QString t = s;
+        t.replace(QLatin1Char('"'), QLatin1String("\"\""));
+        if (t.contains(QLatin1Char(',')) || t.contains(QLatin1Char('\n')) || t.contains(QLatin1Char('\r')))
+            return QLatin1Char('"') + t + QLatin1Char('"');
+        return t;
+    };
+    ensureStorageDirs();
+    const QString path = QDir(userDataRoot()).filePath(QStringLiteral("pomichnyk_feedback.csv"));
+    QFile f(path);
+    const bool newFile = !f.exists();
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Помилка"), tr("Не вдалося записати файл відгуку."));
+        return;
+    }
+    QTextStream out(&f);
+    out.setEncoding(QStringConverter::Utf8);
+    if (newFile) {
+        out << QStringLiteral("timestamp,verdict,query,response,comment\n");
+    }
+    out << QDateTime::currentDateTimeUtc().toString(Qt::ISODate) << QLatin1Char(',') << esc(verdict) << QLatin1Char(',')
+        << esc(query) << QLatin1Char(',') << esc(response) << QLatin1Char(',') << esc(comment) << QLatin1Char('\n');
+    f.close();
+}
+
 void MainWindow::loadTrainingFor(const QString& profile, const QDate& date) {
     if (trainings_.contains(profile) && trainings_[profile].contains(date)) {
         trainingDiary_ = trainings_[profile][date];
@@ -779,7 +1016,12 @@ void MainWindow::saveTrainingFor(const QString& profile, const QDate& date) {
     trainings_[profile][date] = trainingDiary_;
     ensureStorageDirs();
     const QString path = trainingFilePath(profile, date);
-    trainingSaver_.save(trainingDiary_, path.toStdString());
+    if (!trainingSaver_.save(trainingDiary_, path.toStdString())) {
+        LOG_ERROR(std::string("Failed to save training diary: ") + path.toStdString());
+        if (statusBar()) {
+            statusBar()->showMessage(tr("Не вдалося зберегти тренування"), 6000);
+        }
+    }
 }
 
 void MainWindow::onDateChanged(const QDate& date) {
@@ -794,6 +1036,7 @@ void MainWindow::onDateChanged(const QDate& date) {
     refreshStats();
     refreshTraining();
     onShowDailyTip();
+    updateAppChrome();
 }
 
 void MainWindow::onProfileChanged(int) {
@@ -809,9 +1052,11 @@ void MainWindow::onProfileChanged(int) {
     refreshStats();
     refreshTraining();
     onShowDailyTip();
+    updateAppChrome();
 }
 
 void MainWindow::onSearch() {
+    PerfTrace::begin(QStringLiteral("food_search"));
     resultsList_->clear();
     const QString query = searchEdit_->text().trimmed();
     QString selectedCategory = categoryFilter_->currentText();
@@ -840,16 +1085,27 @@ void MainWindow::onSearch() {
         if (query.isEmpty()) {
             results = foodDb_.getAllFoods();
         } else {
-            results = foodDb_.searchFoods(query.toStdString());
+            results = foodDb_.searchFoodsParallel(query.toStdString());
         }
     }
     
-    for (const auto& food : results) {
-        QString itemText = QString::fromStdString(food.getName()) + " [" + 
-                          QString::fromStdString(food.getCategory()) + "] — " +
-                          QString::number(food.getCalories(), 'f', 0) + tr(" ккал/100г");
-        auto* item = new QListWidgetItem(itemText, resultsList_);
-        item->setData(Qt::UserRole, QString::fromStdString(food.getName()));
+    if (results.empty()) {
+        const QString hint = query.isEmpty()
+                                 ? tr("Уведіть назву продукту або оберіть категорію.")
+                                 : tr("Нічого не знайдено. Спробуйте інший запит або додайте свій продукт нижче.");
+        setListPlaceholder(resultsList_, hint);
+    } else {
+        for (const auto& food : results) {
+            QString itemText = QString::fromStdString(food.getName()) + " [" +
+                               QString::fromStdString(food.getCategory()) + "] — " +
+                               QString::number(food.getCalories(), 'f', 0) + tr(" ккал/100г");
+            auto* item = new QListWidgetItem(itemText, resultsList_);
+            item->setData(Qt::UserRole, QString::fromStdString(food.getName()));
+        }
+    }
+    const qint64 ms = PerfTrace::endMs(QStringLiteral("food_search"));
+    if (ms >= 0 && ms > 2000) {
+        statusBar()->showMessage(tr("Пошук зайняв %1 мс (довше за 2 с)").arg(ms), 5000);
     }
 }
 
@@ -883,6 +1139,24 @@ void MainWindow::onRemoveMeal() {
 
 void MainWindow::onSetGoal(int value) {
     diary_.setCalorieGoal(value);
+    refreshStats();
+    saveDiaryFor(currentProfile(), selectedDate_);
+}
+
+void MainWindow::onSetProteinGoal(int value) {
+    diary_.setProteinGoalG(static_cast<double>(value));
+    refreshStats();
+    saveDiaryFor(currentProfile(), selectedDate_);
+}
+
+void MainWindow::onSetCarbGoal(int value) {
+    diary_.setCarbGoalG(static_cast<double>(value));
+    refreshStats();
+    saveDiaryFor(currentProfile(), selectedDate_);
+}
+
+void MainWindow::onSetFatGoal(int value) {
+    diary_.setFatGoalG(static_cast<double>(value));
     refreshStats();
     saveDiaryFor(currentProfile(), selectedDate_);
 }
@@ -977,12 +1251,17 @@ void MainWindow::onSetWaterGoal(int value) {
 void MainWindow::onSetWeight(double value) {
     diary_.setWeightKg(value);
     saveDiaryFor(currentProfile(), selectedDate_);
+    refreshStats();
 }
 
 void MainWindow::onOpenProfileDialog() {
     ProfileDialog dlg(loggedInLogin_, this);
     dlg.setProfileValues(weightSpin_->value(), ageSpin_->value(), heightSpin_->value(), activityCombo_->currentIndex());
     if (dlg.exec() != QDialog::Accepted) return;
+    if (dlg.accountWasDeleted()) {
+        QApplication::quit();
+        return;
+    }
 
     // Оновлюємо поля з діалогу
     if (weightSpin_) weightSpin_->setValue(dlg.weightKg());
@@ -1001,30 +1280,23 @@ void MainWindow::onOpenProfileDialog() {
 }
 
 void MainWindow::onShowWeeklyReport() {
-    // Load last 7 days including selected
     QDialog dlg(this);
     dlg.setWindowTitle(tr("Звіт за 7 днів"));
     auto* lay = new QVBoxLayout(&dlg);
     auto* list = new QListWidget(&dlg);
     lay->addWidget(list);
 
-    const QString profile = currentProfile();
+    QVector<QDate> days;
+    days.reserve(7);
+    for (int i = 6; i >= 0; --i) {
+        days.append(selectedDate_.addDays(-i));
+    }
+    const QVector<Diary> loaded = loadDiariesForDates(days);
+
     double sumCalories = 0.0;
-    QDate today = QDate::currentDate();
-    
-    for (int i = 0; i < 7; ++i) {
-        QDate day = selectedDate_.addDays(-i);
-        Diary d;
-        
-        // If this is the currently selected day, use the in-memory diary
-        if (day == selectedDate_) {
-            d = diary_; // Use current diary data
-        } else {
-            // Try to load from file
-            d.setCalorieGoal(2000);
-            jsonSaver_.load(d, diaryFilePath(profile, day).toStdString());
-        }
-        
+    for (int i = 0; i < days.size(); ++i) {
+        const QDate& day = days[i];
+        const Diary& d = loaded[i];
         const double kcal = d.getTotalCalories();
         if (kcal > 0 || day == selectedDate_) {
             sumCalories += kcal;
@@ -1037,6 +1309,165 @@ void MainWindow::onShowWeeklyReport() {
 
     dlg.resize(420, 360);
     dlg.exec();
+}
+
+void MainWindow::onShowProgressOverview() {
+    const int streak = calculateConsistencyStreak();
+    const int completed = countCompletedTrainingSessionsLast7Days();
+    const int adapt = trainingAdaptationVolume();
+    QString adaptText;
+    if (adapt <= -1) adaptText = tr("легший тиждень (−5 хв до робочих сесій у наступному плані)");
+    else if (adapt == 0) adaptText = tr("стандартна тривалість");
+    else if (adapt == 1) adaptText = tr("легкий прогрес (+5 хв до робочих сесій)");
+    else adaptText = tr("помірний прогрес (+10 хв до робочих сесій)");
+
+    QMessageBox::information(
+        this,
+        tr("Зведення прогресу"),
+        tr("Серія активності (харчування / тренування): %1 дн.\n"
+           "Виконано тренувальних сесій за 7 днів (включно з обраною датою назад): %2\n"
+           "Наступний план (автогенерація): %3\n\n"
+           "Детальніше: «Звіт за 7 днів», «Звіт тренувань (7 днів)», «Графіки».")
+            .arg(streak)
+            .arg(completed)
+            .arg(adaptText));
+}
+
+void MainWindow::onShowProductAbout() {
+    QMessageBox::about(
+        this,
+        tr("Про CalorieCalc"),
+        tr("<h3>CalorieCalc %1</h3>"
+           "<p>Щоденник харчування та тренувань на вашому комп’ютері. "
+           "Дані зберігаються локально.</p>"
+           "<p><b>Можливості:</b> калорії й макроси, вода, вага, план тренувань, "
+           "сесії «Почати тренування», звіти та експорт PDF/CSV, помічник.</p>"
+           "<p>© %2 CalorieCalc</p>")
+            .arg(AppVersion::versionString())
+            .arg(QString::fromUtf8(AppVersion::kBuildYear)));
+}
+
+void MainWindow::onShowProductVisionAbout() {
+    QMessageBox::information(
+        this,
+        tr("CalorieCalc — бачення продукту"),
+        tr("Персоналізований облік харчування та тренувань: цілі, план на тиждень "
+           "(генератор з адаптацією тривалості), щоденники, звіти та графіки.\n\n"
+           "Аудиторія (бізнес-аналіз):\n"
+           "  • новачки — швидкий старт і автоплан;\n"
+           "  • активні користувачі — статистика й графіки;\n"
+           "  • спортсмени — автоматизація плану та помічник.\n\n"
+           "Мобільна хмарна синхронізація — roadmap (див. docs/Vision_CalorieCalc.md)."));
+}
+
+void MainWindow::onShowUrFrNfrSummary() {
+    QMessageBox::information(
+        this,
+        tr("Вимоги UR/FR/NFR"),
+        tr("<b>Функціональні</b>\n"
+           "UR-1 Профіль — реєстрація, вік/вага/зріст, ціль (FR-1.1, FR-1.2)\n"
+           "UR-2 План тренувань — генерація, редагування (FR-2.1, FR-2.2)\n"
+           "UR-3 Калорії — журнал продуктів, підрахунок за день (FR-3.1, FR-3.2)\n"
+           "UR-4 Помічник — питання та рекомендації (FR-4.1, FR-4.2)\n"
+           "UR-5 Прогрес — звіти, графіки (FR-5.1, FR-5.2)\n\n"
+           "<b>Нефункціональні</b>\n"
+           "NFR-1 Відгук ≤2 с — «Перевірка швидкості…»\n"
+           "NFR-2 Масштаб — REST API + load test (roadmap)\n"
+           "NFR-4 Захист ПД — згода, політика, видалення акаунта\n\n"
+           "Детально: docs/Requirements_UR_FR_NFR.md, RequirementsTraceability.md"));
+}
+
+void MainWindow::onNfrSelfCheck() {
+    PerfTrace::begin(QStringLiteral("nfr_food_search"));
+    (void)foodDb_.searchFoodsParallel("кур");
+    const qint64 searchMs = PerfTrace::endMs(QStringLiteral("nfr_food_search"));
+
+    PerfTrace::begin(QStringLiteral("nfr_week_plan"));
+    TrainingPlanGenerator gen;
+    const TrainingPreferences prefs = buildTrainingPreferences();
+    (void)gen.generateWeekParallel(prefs);
+    const qint64 planMs = PerfTrace::endMs(QStringLiteral("nfr_week_plan"));
+
+    const bool searchOk = searchMs >= 0 && searchMs <= 2000;
+    const bool planOk = planMs >= 0 && planMs <= 2000;
+
+    QMessageBox::information(
+        this,
+        tr("Перевірка швидкості"),
+        tr("Час типових операцій (орієнтир NFR-1 — до 2 с):\n"
+           "  • Пошук продуктів (паралельно): %1 мс — %2\n"
+           "  • План на тиждень (паралельно): %3 мс — %4\n\n"
+           "Детальне порівняння потоків: меню «Паралельні обчислення…».")
+            .arg(searchMs)
+            .arg(searchOk ? tr("OK") : tr("перевищено"))
+            .arg(planMs)
+            .arg(planOk ? tr("OK") : tr("перевищено")));
+}
+
+void MainWindow::onParallelComputeBenchmark() {
+    const unsigned hw = std::max(1u, Parallel::threadCount(0, 64));
+
+    PerfTrace::begin(QStringLiteral("bench_search_seq"));
+    (void)foodDb_.searchFoods("а");
+    const qint64 searchSeq = PerfTrace::endMs(QStringLiteral("bench_search_seq"));
+
+    PerfTrace::begin(QStringLiteral("bench_search_par"));
+    (void)foodDb_.searchFoodsParallel("а");
+    const qint64 searchPar = PerfTrace::endMs(QStringLiteral("bench_search_par"));
+
+    QVector<QDate> days;
+    days.reserve(30);
+    for (int i = 29; i >= 0; --i) {
+        days.append(selectedDate_.addDays(-i));
+    }
+
+    PerfTrace::begin(QStringLiteral("bench_diary_seq"));
+    for (const QDate& day : days) {
+        if (day == selectedDate_) {
+            continue;
+        }
+        Diary d;
+        d.setCalorieGoal(2000);
+        jsonSaver_.load(d, diaryFilePath(currentProfile(), day).toStdString());
+    }
+    const qint64 diarySeq = PerfTrace::endMs(QStringLiteral("bench_diary_seq"));
+
+    PerfTrace::begin(QStringLiteral("bench_diary_par"));
+    (void)loadDiariesForDates(days);
+    const qint64 diaryPar = PerfTrace::endMs(QStringLiteral("bench_diary_par"));
+
+    TrainingPlanGenerator gen;
+    const TrainingPreferences prefs = buildTrainingPreferences();
+
+    PerfTrace::begin(QStringLiteral("bench_plan_seq"));
+    (void)gen.generateWeek(prefs);
+    const qint64 planSeq = PerfTrace::endMs(QStringLiteral("bench_plan_seq"));
+
+    PerfTrace::begin(QStringLiteral("bench_plan_par"));
+    (void)gen.generateWeekParallel(prefs);
+    const qint64 planPar = PerfTrace::endMs(QStringLiteral("bench_plan_par"));
+
+    QMessageBox::information(
+        this,
+        tr("Паралельні обчислення"),
+        tr("Потоків (авто): %1\n\n"
+           "Пошук «а»:\n"
+           "  • послідовно: %2 мс\n"
+           "  • паралельно: %3 мс\n\n"
+           "Завантаження 30 днів щоденника:\n"
+           "  • послідовно: %4 мс\n"
+           "  • паралельно: %5 мс\n\n"
+           "План на 7 днів:\n"
+           "  • послідовно: %6 мс\n"
+           "  • паралельно: %7 мс\n\n"
+           "Реалізація: std::async, BatchDiaryLoader, searchFoodsParallel.")
+            .arg(hw)
+            .arg(searchSeq)
+            .arg(searchPar)
+            .arg(diarySeq)
+            .arg(diaryPar)
+            .arg(planSeq)
+            .arg(planPar));
 }
 
 void MainWindow::onToggleTheme() {
@@ -1059,6 +1490,7 @@ void MainWindow::onExportCSV() {
 
     const QString profile = currentProfile();
     QDate startDate = selectedDate_.addDays(-30);
+    int dayCounter = 0;
     for (QDate d = startDate; d <= selectedDate_; d = d.addDays(1)) {
         Diary dDiary;
         if (jsonSaver_.load(dDiary, diaryFilePath(profile, d).toStdString())) {
@@ -1078,6 +1510,7 @@ void MainWindow::onExportCSV() {
                     << dDiary.getWeightKg() << "\n";
             }
         }
+        if ((++dayCounter % 8) == 0) QApplication::processEvents();
     }
 
     file.close();
@@ -1119,6 +1552,209 @@ void MainWindow::onImportCSV() {
     refreshStats();
     
     QMessageBox::information(this, tr("Готово"), tr("Дані імпортовано з CSV файлу."));
+}
+
+void MainWindow::onExportTrainingCSV() {
+    const QString filename =
+        QFileDialog::getSaveFileName(this, tr("Експорт тренувань CSV"), QString(), tr("CSV (*.csv)"));
+    if (filename.isEmpty()) return;
+
+    QFile file(filename);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, tr("Помилка"), tr("Не вдалося відкрити файл для запису."));
+        return;
+    }
+
+    QTextStream out(&file);
+    out.setEncoding(QStringConverter::Utf8);
+    out << "Дата,Профіль,Тип,Тривалість_хв,Час,Статус,Нотатки\n";
+
+    const QString profile = currentProfile();
+    const QDate startDate = selectedDate_.addDays(-60);
+    int dayCounter = 0;
+    for (QDate d = startDate; d <= selectedDate_; d = d.addDays(1)) {
+        TrainingDiary td;
+        if (trainings_.contains(profile) && trainings_[profile].contains(d)) {
+            td = trainings_[profile][d];
+        } else {
+            trainingSaver_.load(td, trainingFilePath(profile, d).toStdString());
+        }
+        for (const auto& s : td.getAllSessions()) {
+            const QString status = QString::fromStdString(TrainingSession::statusToString(s.getStatus()));
+            QString notes = QString::fromStdString(s.getNotes());
+            notes.replace(QLatin1Char('"'), QLatin1String("\"\""));
+            if (notes.contains(QLatin1Char(',')) || notes.contains(QLatin1Char('\n')) || notes.contains(QLatin1Char('\r'))) {
+                notes = QLatin1Char('"') + notes + QLatin1Char('"');
+            }
+            out << d.toString(QStringLiteral("yyyy-MM-dd")) << QLatin1Char(',')
+                << profile << QLatin1Char(',')
+                << QString::fromStdString(s.getType()) << QLatin1Char(',')
+                << s.getDurationMin() << QLatin1Char(',')
+                << QString::fromStdString(s.getTimeHHmm()) << QLatin1Char(',')
+                << status << QLatin1Char(',')
+                << notes << QLatin1Char('\n');
+        }
+        if ((++dayCounter % 14) == 0) QApplication::processEvents();
+    }
+
+    file.close();
+    QMessageBox::information(this, tr("Готово"), tr("Тренування експортовано у CSV (до 60 днів назад)."));
+}
+
+void MainWindow::onExportTrainingPDF() {
+    const QString filename =
+        QFileDialog::getSaveFileName(this, tr("Експорт тренувань PDF"), QString(), tr("PDF (*.pdf)"));
+    if (filename.isEmpty()) return;
+
+    QPrinter printer(QPrinter::HighResolution);
+    printer.setOutputFormat(QPrinter::PdfFormat);
+    printer.setOutputFileName(filename);
+    printer.setPageSize(QPageSize::A4);
+
+    QPainter painter(&printer);
+    painter.setFont(QFont(QStringLiteral("Arial"), 11));
+
+    int y = 50;
+    const QString profile = currentProfile();
+    painter.drawText(50, y, tr("Тренування — звіт (до 60 днів назад)"));
+    y += 24;
+    painter.drawText(50, y, tr("Профіль: %1, остання дата у звіті: %2").arg(profile).arg(selectedDate_.toString(QStringLiteral("yyyy-MM-dd"))));
+    y += 36;
+
+    auto typeUa = [this](const std::string& t) -> QString {
+        if (t == "Strength") return tr("Сила");
+        if (t == "Cardio") return tr("Кардіо");
+        if (t == "Mobility") return tr("Мобільність");
+        return QString::fromStdString(t);
+    };
+
+    const QDate startDate = selectedDate_.addDays(-60);
+    int dayCounter = 0;
+    bool anySession = false;
+    for (QDate d = startDate; d <= selectedDate_; d = d.addDays(1)) {
+        TrainingDiary td;
+        if (trainings_.contains(profile) && trainings_[profile].contains(d)) {
+            td = trainings_[profile][d];
+        } else {
+            trainingSaver_.load(td, trainingFilePath(profile, d).toStdString());
+        }
+        for (const auto& s : td.getAllSessions()) {
+            anySession = true;
+            const QString status = QString::fromStdString(TrainingSession::statusToString(s.getStatus()));
+            const QString line = d.toString(QStringLiteral("yyyy-MM-dd")) + QLatin1String(" | ")
+                + typeUa(s.getType()) + QLatin1String(" | ")
+                + QString::fromStdString(s.getTimeHHmm()) + QLatin1String(" | ")
+                + QString::number(s.getDurationMin()) + tr(" хв | ") + status + QLatin1String(" | ")
+                + QString::fromStdString(s.getNotes());
+            painter.drawText(50, y, line);
+            y += 18;
+            if (y > printer.pageRect(QPrinter::DevicePixel).height() - 60) {
+                printer.newPage();
+                y = 50;
+            }
+        }
+        if ((++dayCounter % 14) == 0) QApplication::processEvents();
+    }
+
+    if (!anySession) {
+        painter.drawText(50, y, tr("(Немає записів тренувань за цей період.)"));
+    }
+
+    painter.end();
+    QMessageBox::information(this, tr("Готово"), tr("PDF з тренуваннями створено."));
+}
+
+void MainWindow::onCopyYesterdayMeals() {
+    const QDate yesterday = selectedDate_.addDays(-1);
+    const QString profile = currentProfile();
+    Diary src;
+    if (diaries_.contains(profile) && diaries_[profile].contains(yesterday)) {
+        src = diaries_[profile][yesterday];
+    } else if (!jsonSaver_.load(src, diaryFilePath(profile, yesterday).toStdString())) {
+        QMessageBox::information(this, tr("Немає даних"), tr("За вчора немає збереженого щоденника."));
+        return;
+    }
+    if (src.getMealsCount() == 0) {
+        QMessageBox::information(this, tr("Порожньо"), tr("За вчора немає прийомів їжі для копіювання."));
+        return;
+    }
+    if (QMessageBox::question(this, tr("Копіювання"),
+                              tr("Додати %1 прийом(ів) з %2 до поточного дня?")
+                                  .arg(static_cast<int>(src.getMealsCount()))
+                                  .arg(yesterday.toString(QStringLiteral("yyyy-MM-dd"))))
+        != QMessageBox::Yes) {
+        return;
+    }
+    for (const auto& m : src.getAllMeals()) {
+        diary_.addMeal(m);
+    }
+    refreshDiary();
+    refreshStats();
+    saveDiaryFor(profile, selectedDate_);
+    QMessageBox::information(this, tr("Готово"), tr("Прийоми скопійовано."));
+}
+
+void MainWindow::onRepeatLastMeal() {
+    if (diary_.getMealsCount() == 0) {
+        QMessageBox::information(this, tr("Немає"), tr("Щоденник порожній — немає останнього прийому."));
+        return;
+    }
+    const auto meals = diary_.getAllMeals();
+    diary_.addMeal(meals.back());
+    refreshDiary();
+    refreshStats();
+    saveDiaryFor(currentProfile(), selectedDate_);
+}
+
+void MainWindow::onWaterQuick250() {
+    diary_.addWater(250);
+    refreshStats();
+    saveDiaryFor(currentProfile(), selectedDate_);
+}
+
+void MainWindow::onWaterQuick500() {
+    diary_.addWater(500);
+    refreshStats();
+    saveDiaryFor(currentProfile(), selectedDate_);
+}
+
+void MainWindow::onCopyDaySummaryToClipboard() {
+    QString t;
+    t += tr("Дата: %1\n").arg(selectedDate_.toString(QStringLiteral("yyyy-MM-dd")));
+    t += tr("Профіль: %1\n").arg(currentProfile());
+    t += tr("Калорії: %1 / %2 ккал\n")
+             .arg(QString::number(diary_.getTotalCalories(), 'f', 0))
+             .arg(QString::number(diary_.getCalorieGoal(), 'f', 0));
+    t += tr("Білок: %1 / %2 г\n")
+             .arg(QString::number(diary_.getTotalProtein(), 'f', 1))
+             .arg(QString::number(diary_.getProteinGoalG(), 'f', 0));
+    t += tr("Вуглеводи: %1 / %2 г\n")
+             .arg(QString::number(diary_.getTotalCarbs(), 'f', 1))
+             .arg(QString::number(diary_.getCarbGoalG(), 'f', 0));
+    t += tr("Жири: %1 / %2 г\n")
+             .arg(QString::number(diary_.getTotalFat(), 'f', 1))
+             .arg(QString::number(diary_.getFatGoalG(), 'f', 0));
+    t += tr("Вода: %1 / %2 мл\n").arg(diary_.getWaterMl()).arg(diary_.getWaterGoalMl());
+    t += tr("Вага: %1 кг\n").arg(QString::number(diary_.getWeightKg(), 'f', 1));
+    t += tr("Прийомів їжі: %1\n").arg(static_cast<int>(diary_.getMealsCount()));
+
+    QApplication::clipboard()->setText(t.trimmed());
+    statusBar()->showMessage(tr("Підсумок дня скопійовано в буфер обміну"), 4000);
+}
+
+void MainWindow::onResetMacroGoalsToDefaults() {
+    diary_.setProteinGoalG(150.0);
+    diary_.setCarbGoalG(250.0);
+    diary_.setFatGoalG(70.0);
+    const QSignalBlocker bp(*proteinGoalSpin_);
+    const QSignalBlocker bc(*carbGoalSpin_);
+    const QSignalBlocker bf(*fatGoalSpin_);
+    proteinGoalSpin_->setValue(150);
+    carbGoalSpin_->setValue(250);
+    fatGoalSpin_->setValue(70);
+    refreshStats();
+    saveDiaryFor(currentProfile(), selectedDate_);
+    statusBar()->showMessage(tr("Цілі БЖВ: 150 / 250 / 70 г"), 3000);
 }
 
 void MainWindow::onExportPDF() {
@@ -1166,9 +1802,14 @@ void MainWindow::onShowCharts() {
     chartDlg.resize(1000, 700);
     auto* layout = new QVBoxLayout(&chartDlg);
     
-    const QString profile = currentProfile();
-    
 #ifdef QT_CHARTS_LIB
+    QVector<QDate> days30;
+    days30.reserve(30);
+    for (int i = 29; i >= 0; --i) {
+        days30.append(selectedDate_.addDays(-i));
+    }
+    const QVector<Diary> diaries30 = loadDiariesForDates(days30);
+
     auto* tabWidget = new QTabWidget(&chartDlg);
     
     // Calories chart (7 days)
@@ -1178,13 +1819,8 @@ void MainWindow::onShowCharts() {
     
     QStringList categories;
     for (int i = 6; i >= 0; --i) {
-        QDate day = selectedDate_.addDays(-i);
-        Diary d;
-        if (day == selectedDate_) {
-            d = diary_;
-        } else {
-            jsonSaver_.load(d, diaryFilePath(profile, day).toStdString());
-        }
+        const QDate day = selectedDate_.addDays(-i);
+        const Diary& d = diaries30[29 - i];
         *caloriesSet << d.getTotalCalories();
         categories << day.toString("MM-dd");
     }
@@ -1216,13 +1852,7 @@ void MainWindow::onShowCharts() {
     QBarSet* waterSet = new QBarSet(tr("Вода"));
     
     for (int i = 6; i >= 0; --i) {
-        QDate day = selectedDate_.addDays(-i);
-        Diary d;
-        if (day == selectedDate_) {
-            d = diary_;
-        } else {
-            jsonSaver_.load(d, diaryFilePath(profile, day).toStdString());
-        }
+        const Diary& d = diaries30[29 - i];
         *waterSet << d.getWaterMl();
     }
     waterSeries->append(waterSet);
@@ -1254,14 +1884,9 @@ void MainWindow::onShowCharts() {
     
     QVector<QString> weightDates;
     for (int i = 29; i >= 0; --i) {
-        QDate day = selectedDate_.addDays(-i);
-        Diary d;
-        if (day == selectedDate_) {
-            d = diary_;
-        } else {
-            jsonSaver_.load(d, diaryFilePath(profile, day).toStdString());
-        }
-        double weight = d.getWeightKg();
+        const QDate day = selectedDate_.addDays(-i);
+        const Diary& d = diaries30[29 - i];
+        const double weight = d.getWeightKg();
         if (weight > 0) {
             weightSeries->append(29 - i, weight);
             weightDates.append(day.toString("MM-dd"));
@@ -1343,91 +1968,21 @@ void MainWindow::onShowCharts() {
     
     layout->addWidget(tabWidget);
 #else
-    // Fallback to text charts if Qt Charts is not available
-    auto* infoLabel = new QLabel(&chartDlg);
-    QString chartText = tr("Графік калорій за останні 7 днів:\n\n");
-
-    QVector<double> calories;
-    QVector<QString> dates;
-    for (int i = 6; i >= 0; --i) {
-        QDate day = selectedDate_.addDays(-i);
-        Diary d;
-        if (day == selectedDate_) {
-            d = diary_;
-        } else {
-            jsonSaver_.load(d, diaryFilePath(profile, day).toStdString());
-        }
-        calories.append(d.getTotalCalories());
-        dates.append(day.toString("MM-dd"));
-    }
-
-    double maxCal = *std::max_element(calories.begin(), calories.end());
-    if (maxCal == 0) maxCal = 2000;
-
-    for (int i = 0; i < dates.size(); ++i) {
-        int barLength = static_cast<int>((calories[i] / maxCal) * 50);
-        QString bar = QString(barLength, QChar(0x2588));
-        chartText += dates[i] + ": " + QString::number(calories[i], 'f', 0) + tr(" ккал ") + bar + "\n";
-    }
-
-    chartText += "\n" + tr("Графік води за останні 7 днів:\n\n");
-    QVector<int> water;
-    for (int i = 6; i >= 0; --i) {
-        QDate day = selectedDate_.addDays(-i);
-        Diary d;
-        if (day == selectedDate_) {
-            d = diary_;
-        } else {
-            jsonSaver_.load(d, diaryFilePath(profile, day).toStdString());
-        }
-        water.append(d.getWaterMl());
-    }
-
-    int maxWater = *std::max_element(water.begin(), water.end());
-    if (maxWater == 0) maxWater = 2000;
-
-    for (int i = 0; i < dates.size(); ++i) {
-        int barLength = static_cast<int>((static_cast<double>(water[i]) / maxWater) * 50);
-        QString bar = QString(barLength, QChar(0x2588));
-        chartText += dates[i] + ": " + QString::number(water[i]) + tr(" мл ") + bar + "\n";
-    }
-
-    // Training activity (ASCII) for last 14 days
-    chartText += "\n" + tr("Графік тренувань за останні 14 днів (хв/день):\n\n");
-    QVector<int> minutes;
-    QVector<QString> activityDates;
-    const QString activityProfile = currentProfile();
-    for (int i = 13; i >= 0; --i) {
-        QDate day = selectedDate_.addDays(-i);
-        TrainingDiary dayTraining;
-        if (trainings_.contains(activityProfile) && trainings_[activityProfile].contains(day)) {
-            dayTraining = trainings_[activityProfile][day];
-        } else {
-            trainingSaver_.load(dayTraining, trainingFilePath(activityProfile, day).toStdString());
-        }
-        minutes.append(dayTraining.getTotalDurationMin());
-        activityDates.append(day.toString("MM-dd"));
-    }
-    int maxMin = minutes.isEmpty() ? 0 : *std::max_element(minutes.begin(), minutes.end());
-    if (maxMin == 0) maxMin = 60;
-    for (int i = 0; i < activityDates.size(); ++i) {
-        int barLength = static_cast<int>((static_cast<double>(minutes[i]) / maxMin) * 50);
-        QString bar = QString(barLength, QChar(0x2588));
-        chartText += activityDates[i] + ": " + QString::number(minutes[i]) + tr(" хв ") + bar + "\n";
-    }
-
-    infoLabel->setText(chartText);
-    infoLabel->setFont(QFont("Courier", 10));
-    layout->addWidget(infoLabel);
+    auto* warn = new QLabel(
+        tr("Графіки недоступні в цій збірці.\n\n"
+           "Встановіть повну версію CalorieCalc з підтримкою графіків або зверніться до підтримки."),
+        &chartDlg);
+    warn->setWordWrap(true);
+    layout->addWidget(warn);
 #endif
     chartDlg.exec();
 }
 
 void MainWindow::refreshDiary() {
-    breakfastList_->clear();
-    lunchList_->clear();
-    dinnerList_->clear();
-    snackList_->clear();
+    QStringList breakfastLines;
+    QStringList lunchLines;
+    QStringList dinnerLines;
+    QStringList snackLines;
 
     const auto meals = diary_.getAllMeals();
     for (const auto& m : meals) {
@@ -1437,19 +1992,46 @@ void MainWindow::refreshDiary() {
             + QString::number(m.getTotalCalories(), 'f', 0) + " ккал";
         const QString mealName = QString::fromStdString(m.getMealName());
         if (mealName == tr("Сніданок")) {
-            breakfastList_->addItem(line);
+            breakfastLines << line;
         } else if (mealName == tr("Обід")) {
-            lunchList_->addItem(line);
+            lunchLines << line;
         } else if (mealName == tr("Вечеря")) {
-            dinnerList_->addItem(line);
+            dinnerLines << line;
         } else {
-            snackList_->addItem(line);
+            snackLines << line;
         }
     }
+
+    const auto fillMealList = [](QListWidget* list, const QStringList& lines, const QString& emptyHint) {
+        list->clear();
+        if (lines.isEmpty()) {
+            setListPlaceholder(list, emptyHint);
+        } else {
+            for (const QString& line : lines) {
+                list->addItem(line);
+            }
+        }
+    };
+
+    fillMealList(breakfastList_, breakfastLines, tr("Поки немає записів — додайте продукт з пошуку."));
+    fillMealList(lunchList_, lunchLines, tr("Поки немає записів — додайте продукт з пошуку."));
+    fillMealList(dinnerList_, dinnerLines, tr("Поки немає записів — додайте продукт з пошуку."));
+    fillMealList(snackList_, snackLines, tr("Поки немає записів — додайте продукт з пошуку."));
 }
 
 void MainWindow::refreshStats() {
+    QSignalBlocker bGoal(*goalSpin_);
+    QSignalBlocker bWaterGoal(*waterGoalSpin_);
+    QSignalBlocker bProt(*proteinGoalSpin_);
+    QSignalBlocker bCarb(*carbGoalSpin_);
+    QSignalBlocker bFat(*fatGoalSpin_);
+
     goalSpin_->setValue(static_cast<int>(diary_.getCalorieGoal()));
+    waterGoalSpin_->setValue(diary_.getWaterGoalMl());
+    proteinGoalSpin_->setValue(static_cast<int>(std::lround(diary_.getProteinGoalG())));
+    carbGoalSpin_->setValue(static_cast<int>(std::lround(diary_.getCarbGoalG())));
+    fatGoalSpin_->setValue(static_cast<int>(std::lround(diary_.getFatGoalG())));
+
     const double eaten = diary_.getTotalCalories();
     const double remaining = diary_.getRemainingCalories();
 
@@ -1461,10 +2043,13 @@ void MainWindow::refreshStats() {
     );
 
     macrosLabel_->setText(
-        tr("Б: %1 г  |  Ж: %2 г  |  В: %3 г")
+        tr("Б: %1 / %2 г  |  Ж: %3 / %4 г  |  В: %5 / %6 г")
             .arg(QString::number(diary_.getTotalProtein(), 'f', 1))
+            .arg(QString::number(diary_.getProteinGoalG(), 'f', 0))
             .arg(QString::number(diary_.getTotalFat(), 'f', 1))
+            .arg(QString::number(diary_.getFatGoalG(), 'f', 0))
             .arg(QString::number(diary_.getTotalCarbs(), 'f', 1))
+            .arg(QString::number(diary_.getCarbGoalG(), 'f', 0))
     );
 
     // Progress bars
@@ -1473,11 +2058,28 @@ void MainWindow::refreshStats() {
         : 0;
     caloriesProgress_->setValue(std::clamp(calProgress, 0, 100));
 
-    waterGoalSpin_->setValue(diary_.getWaterGoalMl());
     const int waterProgress = diary_.getWaterGoalMl() > 0
         ? static_cast<int>((static_cast<double>(diary_.getWaterMl()) / diary_.getWaterGoalMl()) * 100.0)
         : 0;
     waterProgress_->setValue(std::clamp(waterProgress, 0, 100));
+
+    auto macroPct = [](double eaten, double goal) -> int {
+        if (goal <= 0.0) return 0;
+        return std::clamp(static_cast<int>((eaten / goal) * 100.0), 0, 100);
+    };
+    macroProteinProgress_->setValue(macroPct(diary_.getTotalProtein(), diary_.getProteinGoalG()));
+    macroCarbProgress_->setValue(macroPct(diary_.getTotalCarbs(), diary_.getCarbGoalG()));
+    macroFatProgress_->setValue(macroPct(diary_.getTotalFat(), diary_.getFatGoalG()));
+
+    const double hCm = heightSpin_->value();
+    const double wKg = diary_.getWeightKg();
+    if (hCm > 0.0 && wKg > 0.0) {
+        const double m = hCm / 100.0;
+        const double bmi = wKg / (m * m);
+        bmiLabel_->setText(tr("ІМТ: %1").arg(QString::number(bmi, 'f', 1)));
+    } else {
+        bmiLabel_->setText(tr("ІМТ: —"));
+    }
 }
 
 void MainWindow::refreshTraining() {
@@ -1509,6 +2111,10 @@ void MainWindow::refreshTraining() {
         item->setData(Qt::UserRole, i);
     }
 
+    if (sessions.empty()) {
+        setListPlaceholder(trainingsList_, tr("Немає тренувань на цей день. Додайте сесію або згенеруйте план."));
+    }
+
     trainingSummaryLabel_->setText(
         tr("Тренування сьогодні: %1 хв").arg(QString::number(trainingDiary_.getTotalDurationMin())));
 
@@ -1519,7 +2125,7 @@ void MainWindow::refreshTraining() {
             .arg(static_cast<int>(sessions.size())));
 }
 
-int MainWindow::calculateConsistencyStreak() {
+int MainWindow::calculateConsistencyStreak() const {
     const QString profile = currentProfile();
     int streak = 0;
 
@@ -1547,6 +2153,46 @@ int MainWindow::calculateConsistencyStreak() {
     }
 
     return streak;
+}
+
+int MainWindow::countCompletedTrainingSessionsLast7Days() const {
+    const QString profile = currentProfile();
+    int n = 0;
+    for (int i = 0; i < 7; ++i) {
+        const QDate day = selectedDate_.addDays(-i);
+        TrainingDiary td;
+        if (trainings_.contains(profile) && trainings_[profile].contains(day)) {
+            td = trainings_[profile][day];
+        } else {
+            trainingSaver_.load(td, trainingFilePath(profile, day).toStdString());
+        }
+        for (const auto& s : td.getAllSessions()) {
+            if (s.getStatus() == TrainingSession::Status::Completed) ++n;
+        }
+    }
+    return n;
+}
+
+int MainWindow::trainingAdaptationVolume() const {
+    const int completed = countCompletedTrainingSessionsLast7Days();
+    if (completed >= 6) return 2;
+    if (completed >= 3) return 1;
+    if (completed == 0) return -1;
+    return 0;
+}
+
+TrainingPreferences MainWindow::buildTrainingPreferences() const {
+    TrainingPreferences prefs;
+    const QString goalText = trainingGoalCombo_ ? trainingGoalCombo_->currentText() : QString();
+    if (goalText == tr("Схуднення")) prefs.goal = "cutting";
+    else if (goalText == tr("Набір")) prefs.goal = "bulk";
+    else prefs.goal = "maintenance";
+    prefs.adaptationVolume = trainingAdaptationVolume();
+    if (ageSpin_) prefs.ageYears = ageSpin_->value();
+    if (heightSpin_) prefs.heightCm = heightSpin_->value();
+    const double w = weightSpin_ ? weightSpin_->value() : diary_.getWeightKg();
+    if (w > 0.0) prefs.weightKg = w;
+    return prefs;
 }
 
 void MainWindow::onAddTraining() {
@@ -1583,55 +2229,140 @@ void MainWindow::onRemoveTraining() {
     saveTrainingFor(currentProfile(), selectedDate_);
 }
 
-void MainWindow::onGenerateTrainingPlan7Days() {
-    const QString goalText = trainingGoalCombo_->currentText();
-    TrainingPreferences prefs;
-    if (goalText == tr("Схуднення")) prefs.goal = "cutting";
-    else if (goalText == tr("Набір")) prefs.goal = "bulk";
-    else prefs.goal = "maintenance";
-
-    TrainingPlanGenerator generator;
-    const QString profile = currentProfile();
-
-    // Generate for next 7 days starting from selectedDate_ (non-destructive: only fill empty days).
-    for (int i = 0; i < 7; ++i) {
-        const QDate day = selectedDate_.addDays(i);
-        TrainingSession session = generator.generateSessionForDay(i, prefs);
-
-        // Load existing day (from memory or disk).
-        TrainingDiary existing;
-        bool hasInMemory = trainings_.contains(profile) && trainings_[profile].contains(day);
-        if (hasInMemory) {
-            existing = trainings_[profile][day];
-        } else {
-            const QString basePath = trainingFilePath(profile, day);
-            if (trainingSaver_.load(existing, basePath.toStdString())) {
-                trainings_[profile][day] = existing;
-            } else {
-                existing = TrainingDiary();
-                trainings_[profile][day] = existing;
-            }
-        }
-
-        if (!existing.isEmpty()) continue;
-        if (session.getDurationMin() <= 0) continue; // rest day
-
-        existing.addSession(session);
-        trainingDiary_ = existing;
-        saveTrainingFor(profile, day);
+void MainWindow::onEditSelectedTraining() {
+    auto* item = trainingsList_->currentItem();
+    if (!item) {
+        QMessageBox::information(this, tr("Редагування"), tr("Оберіть сесію в списку тренувань."));
+        return;
     }
+    const int idx = item->data(Qt::UserRole).toInt();
+    auto sessions = trainingDiary_.getAllSessions();
+    if (idx < 0 || idx >= static_cast<int>(sessions.size())) return;
+
+    const auto& cur = sessions[static_cast<size_t>(idx)];
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Редагувати сесію"));
+    auto* form = new QFormLayout(&dlg);
+
+    auto* typeCombo = new QComboBox(&dlg);
+    typeCombo->addItems({tr("Сила"), tr("Кардіо"), tr("Мобільність"), tr("Відпочинок")});
+    const QString curType = QString::fromStdString(cur.getType());
+    if (curType == QLatin1String("Strength")) typeCombo->setCurrentIndex(0);
+    else if (curType == QLatin1String("Cardio")) typeCombo->setCurrentIndex(1);
+    else if (curType == QLatin1String("Mobility")) typeCombo->setCurrentIndex(2);
+    else typeCombo->setCurrentIndex(3);
+
+    auto* timeEdit = new QTimeEdit(&dlg);
+    timeEdit->setDisplayFormat(QStringLiteral("HH:mm"));
+    const QTime parsed = QTime::fromString(QString::fromStdString(cur.getTimeHHmm()), QStringLiteral("HH:mm"));
+    timeEdit->setTime(parsed.isValid() ? parsed : QTime(7, 30));
+
+    auto* durSpin = new QSpinBox(&dlg);
+    durSpin->setRange(0, 180);
+    durSpin->setSuffix(tr(" хв"));
+    durSpin->setValue(cur.getDurationMin());
+
+    auto* statusCombo = new QComboBox(&dlg);
+    statusCombo->addItems({tr("План"), tr("Виконано")});
+    statusCombo->setCurrentIndex(cur.getStatus() == TrainingSession::Status::Completed ? 1 : 0);
+
+    auto* notesEdit = new QLineEdit(&dlg);
+    notesEdit->setText(QString::fromStdString(cur.getNotes()));
+
+    form->addRow(tr("Тип:"), typeCombo);
+    form->addRow(tr("Час:"), timeEdit);
+    form->addRow(tr("Тривалість:"), durSpin);
+    form->addRow(tr("Статус:"), statusCombo);
+    form->addRow(tr("Нотатки:"), notesEdit);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    QString typeStr;
+    switch (typeCombo->currentIndex()) {
+        case 0: typeStr = QStringLiteral("Strength"); break;
+        case 1: typeStr = QStringLiteral("Cardio"); break;
+        case 2: typeStr = QStringLiteral("Mobility"); break;
+        default: typeStr = QStringLiteral("Rest"); break;
+    }
+    const int duration = durSpin->value();
+    if (duration <= 0 && typeStr != QLatin1String("Rest")) {
+        QMessageBox::warning(this, tr("Редагування"), tr("Вкажіть тривалість більше 0 хв."));
+        return;
+    }
+    const auto status = statusCombo->currentIndex() == 1 ? TrainingSession::Status::Completed
+                                                         : TrainingSession::Status::Planned;
+    trainingDiary_.replaceSession(
+        idx,
+        TrainingSession(typeStr.toStdString(),
+                        duration,
+                        timeEdit->time().toString(QStringLiteral("HH:mm")).toStdString(),
+                        status,
+                        notesEdit->text().trimmed().toStdString()));
+    refreshTraining();
+    saveTrainingFor(currentProfile(), selectedDate_);
+}
+
+void MainWindow::onGenerateTrainingPlan7Days() {
+    TrainingPlanWorkflowDialog::Context ctx;
+    ctx.profile.ageYears = ageSpin_ ? ageSpin_->value() : 30;
+    ctx.profile.heightCm = heightSpin_ ? heightSpin_->value() : 175.0;
+    ctx.profile.weightKg = weightSpin_ ? weightSpin_->value() : diary_.getWeightKg();
+    if (ctx.profile.weightKg <= 0.0) ctx.profile.weightKg = 70.0;
+    if (trainingGoalCombo_) {
+        const QString g = trainingGoalCombo_->currentText();
+        if (g == tr("Схуднення")) ctx.profile.goalIndex = 0;
+        else if (g == tr("Набір")) ctx.profile.goalIndex = 1;
+        else ctx.profile.goalIndex = 2;
+    }
+    ctx.startDate = selectedDate_;
+    ctx.adaptationVolume = trainingAdaptationVolume();
+    ctx.diary = &diary_;
+    ctx.trainingToday = &trainingDiary_;
+
+    const QString profile = currentProfile();
+    auto saveFn = [this, profile](const QMap<QDate, TrainingDiary>& plan) -> bool {
+        ensureStorageDirs();
+        for (auto it = plan.cbegin(); it != plan.cend(); ++it) {
+            const QDate& day = it.key();
+            const TrainingDiary& td = it.value();
+            trainings_[profile][day] = td;
+            const QString path = trainingFilePath(profile, day);
+            if (!trainingSaver_.save(td, path.toStdString())) return false;
+        }
+        if (plan.contains(selectedDate_)) trainingDiary_ = plan[selectedDate_];
+        return true;
+    };
+
+    TrainingPlanWorkflowDialog dlg(ctx, saveFn, this);
+    const int rc = dlg.exec();
+    if (rc != QDialog::Accepted && !dlg.planActivated()) return;
+
+    const auto prof = dlg.profileResult();
+    if (ageSpin_) ageSpin_->setValue(prof.ageYears);
+    if (heightSpin_) heightSpin_->setValue(prof.heightCm);
+    if (weightSpin_) weightSpin_->setValue(prof.weightKg);
+    if (trainingGoalCombo_) trainingGoalCombo_->setCurrentIndex(prof.goalIndex);
+    diary_.setWeightKg(prof.weightKg);
+    saveProfileMeta(profile);
+    saveDiaryFor(profile, selectedDate_);
 
     loadTrainingFor(profile, selectedDate_);
     refreshTraining();
-    QMessageBox::information(this,
-                             tr("План згенеровано"),
-                             tr("Автоплан на 7 днів збережено. Дні з наявними тренуваннями не перезаписуються."));
+    refreshStats();
 }
 
 void MainWindow::onAskOfflineAssistant() {
     QDialog dlg(this);
-    dlg.setWindowTitle(tr("Офлайн-помічник"));
-    dlg.resize(700, 520);
+    dlg.setWindowTitle(tr("Помічник"));
+    dlg.resize(720, 580);
+
+    QString lastQuery;
+    QString lastResponse;
 
     auto* lay = new QVBoxLayout(&dlg);
     auto* chat = new QPlainTextEdit(&dlg);
@@ -1641,47 +2372,98 @@ void MainWindow::onAskOfflineAssistant() {
     auto* input = new QLineEdit(&dlg);
     input->setPlaceholderText(tr("Поставте питання про харчування або тренування..."));
 
-    auto* btnRow = new QHBoxLayout();
-    auto* askOfflineBtn = new QPushButton(tr("Задати (Offline)"), &dlg);
-    auto* askOnlineBtn = new QPushButton(tr("Онлайн-помічник (заглушка)"), &dlg);
-    btnRow->addWidget(askOfflineBtn);
-    btnRow->addWidget(askOnlineBtn);
+    auto* askBtn = new QPushButton(tr("Задати питання"), &dlg);
+    auto* modeLabel = new QLabel(&dlg);
+    modeLabel->setWordWrap(true);
+    if (CloudAssistant::isConfigured()) {
+        modeLabel->setText(tr("Режим: хмарна модель (API-ключ знайдено) + локальний резерв."));
+    } else {
+        modeLabel->setText(
+            tr("Режим: локальна база продуктів і правила. Для хмарної моделі задайте "
+               "CALORIECALC_API_KEY або OPENAI_API_KEY і перезапустіть програму."));
+    }
+
+    auto* feedbackLabel = new QLabel(tr("Оцінка та корекція останньої поради (для аналізу якості рекомендацій):"), &dlg);
+    auto* verdictCombo = new QComboBox(&dlg);
+    verdictCombo->addItem(tr("— оберіть оцінку —"), QString());
+    verdictCombo->addItem(tr("Корисно"), QStringLiteral("helpful"));
+    verdictCombo->addItem(tr("Не підійшло / потребує корекції"), QStringLiteral("reject"));
+    auto* feedbackComment = new QLineEdit(&dlg);
+    feedbackComment->setPlaceholderText(tr("Що саме змінити або уточнити? (необов’язково)"));
+    auto* saveFeedbackBtn = new QPushButton(tr("Зберегти відгук для останньої відповіді"), &dlg);
 
     lay->addWidget(chat, 1);
     lay->addWidget(input);
-    lay->addLayout(btnRow);
+    lay->addWidget(askBtn);
+    lay->addWidget(modeLabel);
+    lay->addWidget(feedbackLabel);
+    lay->addWidget(verdictCombo);
+    lay->addWidget(feedbackComment);
+    lay->addWidget(saveFeedbackBtn);
 
-    const auto getPrefs = [&]() -> TrainingPreferences {
-        const QString goalText = trainingGoalCombo_->currentText();
-        TrainingPreferences prefs;
-        if (goalText == tr("Схуднення")) prefs.goal = "cutting";
-        else if (goalText == tr("Набір")) prefs.goal = "bulk";
-        else prefs.goal = "maintenance";
-        return prefs;
-    };
-
-    connect(askOfflineBtn, &QPushButton::clicked, [&]() {
+    connect(askBtn, &QPushButton::clicked, [&, this]() {
         const QString q = input->text().trimmed();
         if (q.isEmpty()) return;
 
         chat->appendPlainText(tr("Ви: %1").arg(q));
+        askBtn->setEnabled(false);
+        chat->appendPlainText(tr("… обробка запиту"));
+        qApp->processEvents();
 
-        OfflineAssistant assistant;
-        const std::string resp = assistant.getRecommendation(q.toStdString(), diary_, trainingDiary_, getPrefs());
-        chat->appendPlainText(QString::fromStdString(resp));
+        AssistantService::Request req;
+        req.question = q;
+        req.diary = &diary_;
+        req.training = &trainingDiary_;
+        const TrainingPreferences prefs = buildTrainingPreferences();
+        req.prefs = &prefs;
+        req.foodDb = &foodDb_;
+        req.activityStreakDays = calculateConsistencyStreak();
+        req.preferCloud = true;
 
+        const AssistantService::Response resp = AssistantService::answer(req);
+
+        QString block = chat->toPlainText();
+        const QString waitLine = tr("… обробка запиту");
+        if (block.endsWith(waitLine)) {
+            block.chop(waitLine.size());
+            while (block.endsWith(QLatin1Char('\n'))) {
+                block.chop(1);
+            }
+            chat->setPlainText(block);
+        }
+
+        const QString header = resp.usedCloud
+                                   ? tr("[Хмарна модель]")
+                                   : tr("[%1]").arg(resp.modeLabel);
+        const QString r = header + QLatin1Char('\n') + resp.text;
+        chat->appendPlainText(r);
+        askBtn->setEnabled(true);
+
+        lastQuery = q;
+        lastResponse = resp.text;
         input->clear();
     });
 
-    connect(askOnlineBtn, &QPushButton::clicked, this, &MainWindow::onAskOnlineAssistantPlaceholder);
+    connect(saveFeedbackBtn, &QPushButton::clicked, [&]() {
+        if (lastResponse.isEmpty()) {
+            QMessageBox::information(&dlg, tr("Немає відповіді"),
+                                    tr("Спочатку отримайте відповідь помічника."));
+            return;
+        }
+        const QString v = verdictCombo->currentData().toString();
+        if (v.isEmpty()) {
+            QMessageBox::warning(&dlg, tr("Оцінка"), tr("Оберіть оцінку поради."));
+            return;
+        }
+        appendAssistantFeedback(lastQuery, lastResponse, v, feedbackComment->text());
+        QMessageBox::information(
+            &dlg,
+            tr("Дякуємо"),
+            tr("Відгук збережено у файлі pomichnyk_feedback.csv у каталозі даних користувача."));
+    });
 
     dlg.exec();
-}
-
-void MainWindow::onAskOnlineAssistantPlaceholder() {
-    QMessageBox::information(this,
-                             tr("Онлайн-помічник"),
-                             tr("У цьому навчальному проєкті онлайн-помічник ще не інтегровано. Використовується локальний помічник."));
+    updateAssistantModeIndicator();
 }
 
 void MainWindow::onMarkTrainingCompleted() {
@@ -1810,39 +2592,125 @@ void MainWindow::onShowTrainingWeeklyReport() {
     dlg.exec();
 }
 
+void MainWindow::onCompleteWorkout() {
+    if (!workoutSessionActive_) {
+        QMessageBox::warning(
+            this, tr("Завершення тренування"),
+            tr("Немає активної сесії тренування.\nСпочатку натисніть «Почати тренування»."));
+        return;
+    }
+    QMessageBox::information(
+        this, tr("Завершення тренування"),
+        tr("Активна сесія відкрита у вікні тренування.\n"
+           "Натисніть «Завершити тренування» у цьому вікні, щоб зберегти результат."));
+}
+
 void MainWindow::onStartWorkout() {
-    // 1) Check minimal personal data; request if missing
-    const bool hasPersonalData = (weightSpin_->value() > 0.0 && ageSpin_->value() > 0 && heightSpin_->value() > 0.0);
+    if (workoutSessionActive_) {
+        QMessageBox::warning(this, tr("Тренування"),
+                             tr("Сесія тренування вже активна. Завершіть її перед новим стартом."));
+        return;
+    }
+
+    auto typeUa = [this](const std::string& t) -> QString {
+        if (t == "Strength") return tr("Сила");
+        if (t == "Cardio") return tr("Кардіо");
+        if (t == "Mobility") return tr("Мобільність");
+        return tr("Тренування");
+    };
+
+    auto profileMetaSaved = [this]() -> bool {
+        const QString profile = currentProfile();
+        saveProfileMeta(profile);
+        saveDiaryFor(profile, selectedDate_);
+        const QString filePath =
+            QDir(userDataRoot())
+                .filePath(QStringLiteral("%1/profile.json").arg(profileStorageDir(profile)));
+        return QFileInfo::exists(filePath);
+    };
+
+    // 1) Personal data (US: enter personal data / start without required data)
+    const bool hasPersonalData =
+        (weightSpin_->value() > 0.0 && ageSpin_->value() > 0 && heightSpin_->value() > 0.0);
     if (!hasPersonalData) {
         QDialog dataDlg(this);
-        dataDlg.setWindowTitle(tr("Мінімальні персональні дані"));
+        dataDlg.setWindowTitle(tr("Персональні дані для тренування"));
         auto* lay = new QVBoxLayout(&dataDlg);
+        lay->addWidget(new QLabel(
+            tr("Заповніть обов’язкові поля для персонального плану."), &dataDlg));
         auto* form = new QFormLayout();
+        auto* ageBox = new QSpinBox(&dataDlg);
+        ageBox->setRange(10, 100);
+        ageBox->setSuffix(tr(" р."));
+        ageBox->setValue(ageSpin_->value() > 0 ? ageSpin_->value() : 30);
+        auto* heightBox = new QDoubleSpinBox(&dataDlg);
+        heightBox->setRange(120.0, 230.0);
+        heightBox->setDecimals(1);
+        heightBox->setSuffix(tr(" см"));
+        heightBox->setValue(heightSpin_->value() > 0.0 ? heightSpin_->value() : 175.0);
+        auto* weightBox = new QDoubleSpinBox(&dataDlg);
+        weightBox->setRange(30.0, 250.0);
+        weightBox->setDecimals(1);
+        weightBox->setSuffix(tr(" кг"));
+        weightBox->setValue(weightSpin_->value() > 0.0 ? weightSpin_->value() : 70.0);
         auto* goalBox = new QComboBox(&dataDlg);
         goalBox->addItems({tr("Схуднення"), tr("Набір"), tr("Підтримка")});
         auto* levelBox = new QComboBox(&dataDlg);
         levelBox->addItems({tr("Початковий"), tr("Середній"), tr("Просунутий")});
         auto* durationBox = new QSpinBox(&dataDlg);
         durationBox->setRange(10, 120);
-        durationBox->setValue(30);
+        durationBox->setValue(std::max(10, trainingDurationSpin_->value()));
         durationBox->setSuffix(tr(" хв"));
+        form->addRow(tr("Вік *:"), ageBox);
+        form->addRow(tr("Зріст *:"), heightBox);
+        form->addRow(tr("Вага *:"), weightBox);
         form->addRow(tr("Ціль:"), goalBox);
         form->addRow(tr("Рівень:"), levelBox);
         form->addRow(tr("Тривалість:"), durationBox);
         lay->addLayout(form);
+        auto* validationLbl = new QLabel(&dataDlg);
+        validationLbl->setWordWrap(true);
+        validationLbl->setObjectName(QStringLiteral("validationError"));
+        lay->addWidget(validationLbl);
         auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dataDlg);
         lay->addWidget(btns);
-        connect(btns, &QDialogButtonBox::accepted, &dataDlg, &QDialog::accept);
         connect(btns, &QDialogButtonBox::rejected, &dataDlg, &QDialog::reject);
+        connect(btns, &QDialogButtonBox::accepted, &dataDlg, [&]() {
+            const QString bodyErr = ProfileValidation::errorForTrainingBody(ageBox->value(),
+                                                                          heightBox->value(),
+                                                                          weightBox->value());
+            if (!bodyErr.isEmpty()) {
+                validationLbl->setText(bodyErr);
+                return;
+            }
+            if (durationBox->value() < 10) {
+                validationLbl->setText(tr("Тривалість: мінімум 10 хв."));
+                return;
+            }
+            validationLbl->clear();
+            dataDlg.accept();
+        });
         if (dataDlg.exec() != QDialog::Accepted) return;
 
+        ageSpin_->setValue(ageBox->value());
+        heightSpin_->setValue(heightBox->value());
+        weightSpin_->setValue(weightBox->value());
+        diary_.setWeightKg(weightBox->value());
         trainingGoalCombo_->setCurrentText(goalBox->currentText());
         trainingDurationSpin_->setValue(durationBox->value());
-        // Мапимо рівень на активність профілю
         activityCombo_->setCurrentIndex(levelBox->currentIndex());
+
+        while (!profileMetaSaved()) {
+            if (QMessageBox::warning(this, tr("Помилка збереження"),
+                                     tr("Не вдалося зберегти персональні дані. Повторити?"),
+                                     QMessageBox::Retry | QMessageBox::Cancel, QMessageBox::Retry)
+                != QMessageBox::Retry) {
+                return;
+            }
+        }
     }
 
-    // 2) Generate plan for today from current preferences
+    // 2) Generate plan (US: personalized training plan)
     TrainingPreferences prefs;
     const QString goalText = trainingGoalCombo_->currentText();
     if (goalText == tr("Схуднення")) prefs.goal = "cutting";
@@ -1850,73 +2718,217 @@ void MainWindow::onStartWorkout() {
     else prefs.goal = "maintenance";
 
     TrainingPlanGenerator generator;
-    TrainingSession planned = generator.generateSessionForDay(0, prefs);
-    if (planned.getDurationMin() <= 0 || planned.getType() == "Rest") {
-        planned = TrainingSession("Cardio", std::max(20, trainingDurationSpin_->value()), "07:30",
-                                  TrainingSession::Status::Planned, "");
-    } else {
-        planned = TrainingSession(planned.getType(), std::max(10, trainingDurationSpin_->value()),
-                                  planned.getTimeHHmm(), TrainingSession::Status::Planned, "");
+
+    auto buildPlan = [&]() -> std::vector<TrainingSession> {
+        std::vector<TrainingSession> sessions = generator.generateSessionsForDay(0, prefs);
+        if (sessions.empty()) {
+            sessions.push_back(TrainingSession("Cardio", std::max(20, trainingDurationSpin_->value()), "07:30",
+                                               TrainingSession::Status::Planned, ""));
+        } else {
+            for (size_t i = 0; i < sessions.size(); ++i) {
+                TrainingSession s = sessions[i];
+                if (s.getDurationMin() <= 0) continue;
+                int d = s.getDurationMin();
+                if (i == 0) d = std::max(d, std::max(10, trainingDurationSpin_->value()));
+                sessions[i] = TrainingSession(s.getType(), d, s.getTimeHHmm(), TrainingSession::Status::Planned,
+                                              s.getNotes());
+            }
+        }
+        return sessions;
+    };
+
+    std::vector<TrainingSession> plannedSessions;
+    for (;;) {
+        try {
+            plannedSessions = buildPlan();
+        } catch (...) {
+            plannedSessions.clear();
+        }
+        if (!plannedSessions.empty()) break;
+        if (QMessageBox::warning(this, tr("Помилка генерації плану"),
+                                 tr("Не вдалося згенерувати план тренування. Повторити?"),
+                                 QMessageBox::Retry | QMessageBox::Cancel, QMessageBox::Retry)
+            != QMessageBox::Retry) {
+            return;
+        }
     }
 
-    // 3) Show plan and start
-    const QString typeUa = (planned.getType() == "Strength") ? tr("Сила")
-                           : (planned.getType() == "Cardio") ? tr("Кардіо")
-                           : (planned.getType() == "Mobility") ? tr("Мобільність")
-                           : tr("Тренування");
-    if (QMessageBox::question(
-            this,
-            tr("План тренування"),
-            tr("План на сьогодні:\n- Тип: %1\n- Тривалість: %2 хв\n\nПочати тренування?")
-                .arg(typeUa)
-                .arg(planned.getDurationMin()))
-        != QMessageBox::Yes) {
+    QString planBody;
+    int plannedMinutes = 0;
+    for (const auto& s : plannedSessions) {
+        if (s.getDurationMin() <= 0) continue;
+        planBody += tr("- %1 о %2, %3 хв\n")
+                         .arg(typeUa(s.getType()))
+                         .arg(QString::fromStdString(s.getTimeHHmm()))
+                         .arg(s.getDurationMin());
+        plannedMinutes += s.getDurationMin();
+    }
+
+    QMessageBox planMsg(this);
+    planMsg.setWindowTitle(tr("План тренування"));
+    planMsg.setText(tr("План на сьогодні:\n%1\nРазом: %2 хв").arg(planBody).arg(plannedMinutes));
+    auto* usePlanBtn = planMsg.addButton(tr("За планом"), QMessageBox::AcceptRole);
+    auto* noPlanBtn = planMsg.addButton(tr("Без плану (швидко)"), QMessageBox::ActionRole);
+    planMsg.addButton(QMessageBox::Cancel);
+    planMsg.exec();
+    if (planMsg.clickedButton() == nullptr
+        || planMsg.clickedButton() == planMsg.button(QMessageBox::Cancel)) {
+        return;
+    }
+    const bool usePlan = (planMsg.clickedButton() == usePlanBtn);
+    if (!usePlan) {
+        plannedSessions.clear();
+        const int dur = std::max(10, trainingDurationSpin_->value());
+        plannedSessions.push_back(TrainingSession("Cardio", dur,
+                                                  QTime::currentTime().toString("HH:mm").toStdString(),
+                                                  TrainingSession::Status::Planned, "Швидке тренування"));
+        plannedMinutes = dur;
+        planBody = tr("- %1 о %2, %3 хв\n")
+                       .arg(typeUa("Cardio"))
+                       .arg(QString::fromStdString(plannedSessions.back().getTimeHHmm()))
+                       .arg(dur);
+    }
+
+    std::vector<TrainingSession> workoutSteps;
+    for (const auto& s : plannedSessions) {
+        if (s.getDurationMin() > 0) workoutSteps.push_back(s);
+    }
+    if (usePlan && workoutSteps.empty()) {
+        QMessageBox::information(this, tr("Немає вправ"),
+                                 tr("У плані немає вправ на сьогодні. Згенеруйте план на 7 днів або оберіть "
+                                    "«Без плану»."));
         return;
     }
 
-    // 4) Guided workout progress
+    // 3) Start session confirmation (US: start workout)
+    QMessageBox::information(
+        this, tr("Тренування розпочато"),
+        tr("Сесія тренування розпочата.\n\n%1Разом: %2 хв.").arg(planBody).arg(plannedMinutes));
+
+    workoutSessionActive_ = true;
+    activeWorkoutPlan_ = workoutSteps;
+
+    // 4) Perform exercises (US: perform exercises)
     QDialog workoutDlg(this);
-    workoutDlg.setWindowTitle(tr("Workout in progress"));
-    workoutDlg.resize(520, 360);
+    workoutDlg.setWindowTitle(tr("Тренування виконується"));
+    workoutDlg.resize(560, 440);
     auto* lay = new QVBoxLayout(&workoutDlg);
-    auto* info = new QLabel(tr("Виконуйте кроки по черзі. Прогрес оновлюється автоматично."), &workoutDlg);
-    auto* c1 = new QCheckBox(tr("Розминка (5 хв)"), &workoutDlg);
-    auto* c2 = new QCheckBox(tr("Основний блок"), &workoutDlg);
-    auto* c3 = new QCheckBox(tr("Заминка (5 хв)"), &workoutDlg);
+    auto* info = new QLabel(tr("Відмічайте виконані вправи з плану. Можна додати ще вправу."), &workoutDlg);
+    auto* stepsBox = new QGroupBox(tr("Вправи з плану"), &workoutDlg);
+    auto* stepsLay = new QVBoxLayout(stepsBox);
+    QVector<QCheckBox*> stepBoxes;
+    auto* detailLabel = new QLabel(&workoutDlg);
+    detailLabel->setWordWrap(true);
+    detailLabel->setObjectName(QStringLiteral("exerciseDetail"));
+
+    auto showStepDetail = [&](QCheckBox* cb) {
+        const int idx = stepBoxes.indexOf(cb);
+        if (idx < 0 || idx >= workoutSteps.size()) return;
+        const auto& s = workoutSteps[static_cast<size_t>(idx)];
+        const QString notes = QString::fromStdString(s.getNotes()).trimmed();
+        detailLabel->setText(
+            tr("Тип: %1\nЧас: %2\nТривалість: %3 хв%4")
+                .arg(typeUa(s.getType()))
+                .arg(QString::fromStdString(s.getTimeHHmm()))
+                .arg(s.getDurationMin())
+                .arg(notes.isEmpty() ? QString() : tr("\nПримітки: %1").arg(notes)));
+    };
+
+    for (const auto& s : workoutSteps) {
+        auto* cb = new QCheckBox(
+            tr("%1 — %2 хв (%3)")
+                .arg(typeUa(s.getType()))
+                .arg(s.getDurationMin())
+                .arg(QString::fromStdString(s.getTimeHHmm())),
+            stepsBox);
+        stepsLay->addWidget(cb);
+        stepBoxes.append(cb);
+        connect(cb, &QCheckBox::clicked, &workoutDlg, [cb, showStepDetail]() { showStepDetail(cb); });
+    }
+    if (!stepBoxes.isEmpty()) showStepDetail(stepBoxes.first());
+
+    QVector<QCheckBox*> extraSteps;
+    auto* addStepBtn = new QPushButton(tr("Додати вправу"), &workoutDlg);
     auto* progress = new QProgressBar(&workoutDlg);
     progress->setRange(0, 100);
-    progress->setValue(0);
     auto* finishBtn = new QPushButton(tr("Завершити тренування"), &workoutDlg);
     finishBtn->setEnabled(false);
     lay->addWidget(info);
-    lay->addWidget(c1);
-    lay->addWidget(c2);
-    lay->addWidget(c3);
+    lay->addWidget(stepsBox);
+    lay->addWidget(detailLabel);
+    lay->addWidget(addStepBtn);
     lay->addWidget(progress);
     lay->addWidget(finishBtn);
 
-    auto recomputeProgress = [=]() {
-        int done = (c1->isChecked() ? 1 : 0) + (c2->isChecked() ? 1 : 0) + (c3->isChecked() ? 1 : 0);
-        progress->setValue(done * 33 + (done == 3 ? 1 : 0));
-        finishBtn->setEnabled(done == 3);
+    auto recomputeProgress = [=, &extraSteps]() mutable {
+        const int total = stepBoxes.size() + extraSteps.size();
+        int done = 0;
+        for (auto* cb : stepBoxes) {
+            if (cb->isChecked()) ++done;
+        }
+        for (auto* cb : extraSteps) {
+            if (cb->isChecked()) ++done;
+        }
+        progress->setValue(total > 0 ? (done * 100) / total : 0);
+        finishBtn->setEnabled(done == total && total > 0);
     };
-    connect(c1, &QCheckBox::toggled, &workoutDlg, recomputeProgress);
-    connect(c2, &QCheckBox::toggled, &workoutDlg, recomputeProgress);
-    connect(c3, &QCheckBox::toggled, &workoutDlg, recomputeProgress);
+    for (auto* cb : stepBoxes) {
+        connect(cb, &QCheckBox::toggled, &workoutDlg, recomputeProgress);
+    }
+    connect(addStepBtn, &QPushButton::clicked, &workoutDlg, [&]() {
+        auto* cb = new QCheckBox(tr("Додаткова вправа %1").arg(extraSteps.size() + 1), stepsBox);
+        stepsLay->addWidget(cb);
+        extraSteps.append(cb);
+        connect(cb, &QCheckBox::toggled, &workoutDlg, recomputeProgress);
+        recomputeProgress();
+    });
     connect(finishBtn, &QPushButton::clicked, &workoutDlg, &QDialog::accept);
+    recomputeProgress();
 
-    if (workoutDlg.exec() != QDialog::Accepted) return;
+    const int workoutRc = workoutDlg.exec();
+    workoutSessionActive_ = false;
+    activeWorkoutPlan_.clear();
+    if (workoutRc != QDialog::Accepted) return;
 
-    // 5) Save completed session and show summary
-    trainingDiary_.addSession(TrainingSession(planned.getType(), planned.getDurationMin(), planned.getTimeHHmm(),
-                                              TrainingSession::Status::Completed, "Started via Start workout"));
-    saveTrainingFor(currentProfile(), selectedDate_);
+    // 5) Complete workout + save with retry (US: complete workout)
+    auto persistWorkout = [&]() -> bool {
+        TrainingDiary snapshot = trainingDiary_;
+        for (const auto& s : plannedSessions) {
+            if (s.getDurationMin() <= 0) continue;
+            snapshot.addSession(TrainingSession(s.getType(), s.getDurationMin(), s.getTimeHHmm(),
+                                                TrainingSession::Status::Completed, tr("Сесія тренування").toStdString()));
+        }
+        const QString profile = currentProfile();
+        const QString path = trainingFilePath(profile, selectedDate_);
+        if (!trainingSaver_.save(snapshot, path.toStdString())) return false;
+        trainingDiary_ = snapshot;
+        trainings_[profile][selectedDate_] = snapshot;
+        return true;
+    };
+
+    while (!persistWorkout()) {
+        if (QMessageBox::warning(this, tr("Помилка збереження"),
+                                 tr("Не вдалося завершити тренування (помилка збереження). Повторити?"),
+                                 QMessageBox::Retry | QMessageBox::Cancel, QMessageBox::Retry)
+            != QMessageBox::Retry) {
+            return;
+        }
+    }
     refreshTraining();
 
-    QMessageBox::information(this, tr("Тренування завершено"),
-                             tr("Тренування успішно завершено.\nЗбережено: %1, %2 хв.\nВи можете переглянути прогрес у дашборді.")
-                                 .arg(typeUa)
-                                 .arg(planned.getDurationMin()));
+    int savedMinutes = 0;
+    QString savedSummary;
+    for (const auto& s : plannedSessions) {
+        if (s.getDurationMin() <= 0) continue;
+        savedMinutes += s.getDurationMin();
+        savedSummary += tr("%1 (%2 хв)\n").arg(typeUa(s.getType())).arg(s.getDurationMin());
+    }
+
+    QMessageBox::information(
+        this, tr("Тренування завершено"),
+        tr("Тренування успішно завершено.\nЗбережено сесій:\n%1Разом: %2 хв.\nПерегляньте дашборд фітнесу.")
+            .arg(savedSummary)
+            .arg(savedMinutes));
 }
 
 void MainWindow::onQuickStartWorkout() {

@@ -1,15 +1,18 @@
-PROJECT_NAME           = "Calorie Counter"
+PROJECT_NAME           = "CalorieCalc"
 PROJECT_NUMBER         = 1.0
-PROJECT_BRIEF          = "Трекер харчування на C++/Qt"
-OUTPUT_DIRECTORY       = docs/doxygen
-INPUT                  = .
+PROJECT_BRIEF          = "Десктопний облік харчування та тренувань (C++/Qt)"
+OUTPUT_DIRECTORY       = @CMAKE_CURRENT_BINARY_DIR@
+INPUT                  = @CMAKE_SOURCE_DIR@
 FILE_PATTERNS          = *.h *.cpp
 RECURSIVE              = YES
+EXCLUDE_PATTERNS       = */build/* */cmake-build-*/* */.git/* */tests/* */benchmarks/*
+EXCLUDE                = gui/MainWindow.cpp gui/LoginDialog.cpp
 GENERATE_HTML          = YES
 GENERATE_LATEX         = NO
-EXTRACT_ALL            = YES
+EXTRACT_ALL            = NO
 EXTRACT_PRIVATE        = NO
-EXTRACT_STATIC         = YES
+EXTRACT_STATIC         = NO
 HAVE_DOT               = NO
 QUIET                  = NO
-
+JAVADOC_AUTOBRIEF      = YES
+OPTIMIZE_OUTPUT_SLICE  = NO

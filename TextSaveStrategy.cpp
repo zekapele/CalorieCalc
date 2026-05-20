@@ -14,6 +14,9 @@ bool TextSaveStrategy::save(const Diary& diary, const std::string& filename) con
     
     file << std::fixed << std::setprecision(2);
     file << "CALORIE_GOAL: " << diary.getCalorieGoal() << "\n";
+    file << "PROTEIN_GOAL_G: " << diary.getProteinGoalG() << "\n";
+    file << "CARB_GOAL_G: " << diary.getCarbGoalG() << "\n";
+    file << "FAT_GOAL_G: " << diary.getFatGoalG() << "\n";
     file << "MEALS_COUNT: " << diary.getAllMeals().size() << "\n";
     file << "---\n";
     
@@ -41,20 +44,24 @@ bool TextSaveStrategy::load(Diary& diary, const std::string& filename) const {
     }
     
     diary.clear();
-    
+
     std::string line;
     double goal = 2000.0;
-    
-    // Читаємо ціль
-    if (std::getline(file, line)) {
-        if (line.find("CALORIE_GOAL:") != std::string::npos) {
-            goal = std::stod(line.substr(line.find(":") + 1));
-        }
+    double proteinGoal = 150.0;
+    double carbGoal = 250.0;
+    double fatGoal = 70.0;
+
+    while (std::getline(file, line)) {
+        if (line == "---") break;
+        const auto colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        const std::string key = line.substr(0, colon);
+        const std::string val = line.substr(colon + 1);
+        if (key.find("CALORIE_GOAL") != std::string::npos) goal = std::stod(val);
+        else if (key.find("PROTEIN_GOAL_G") != std::string::npos) proteinGoal = std::stod(val);
+        else if (key.find("CARB_GOAL_G") != std::string::npos) carbGoal = std::stod(val);
+        else if (key.find("FAT_GOAL_G") != std::string::npos) fatGoal = std::stod(val);
     }
-    
-    // Пропускаємо кількість та розділювач
-    std::getline(file, line);
-    std::getline(file, line);
     
     // Читаємо прийоми їжі
     while (std::getline(file, line)) {
@@ -84,6 +91,9 @@ bool TextSaveStrategy::load(Diary& diary, const std::string& filename) const {
     }
     
     diary.setCalorieGoal(goal);
+    diary.setProteinGoalG(proteinGoal);
+    diary.setCarbGoalG(carbGoal);
+    diary.setFatGoalG(fatGoal);
     file.close();
     return true;
 }

@@ -1,4 +1,5 @@
 #pragma once
+#include <vector>
 #include <QMainWindow>
 #include <QListWidget>
 #include <QLineEdit>
@@ -35,6 +36,9 @@ private slots:
     void onAddFood();
     void onRemoveMeal();
     void onSetGoal(int value);
+    void onSetProteinGoal(int value);
+    void onSetCarbGoal(int value);
+    void onSetFatGoal(int value);
     void onAddCustomFood();
     void onSaveTemplate();
     void onApplyTemplate();
@@ -49,26 +53,43 @@ private slots:
     void onExportCSV();
     void onImportCSV();
     void onExportPDF();
+    void onExportTrainingCSV();
+    void onExportTrainingPDF();
     void onShowCharts();
+    void onShowProgressOverview();
+    void onShowProductAbout();
+    void onShowProductVisionAbout();
+    void onShowUrFrNfrSummary();
+    void onNfrSelfCheck();
+    void onParallelComputeBenchmark();
+    void onCopyYesterdayMeals();
+    void onRepeatLastMeal();
+    void onWaterQuick250();
+    void onWaterQuick500();
+    void onCopyDaySummaryToClipboard();
+    void onResetMacroGoalsToDefaults();
 
     // Fitness/training slots
     void onAddTraining();
     void onRemoveTraining();
+    void onEditSelectedTraining();
     void onGenerateTrainingPlan7Days();
     void onAskOfflineAssistant();
-    void onAskOnlineAssistantPlaceholder();
     void onMarkTrainingCompleted();
     void onDuplicateTrainingTomorrow();
     void onShowDailyTip();
     void onShowTrainingWeeklyReport();
     void onStartWorkout();
     void onQuickStartWorkout();
+    void onCompleteWorkout();
 
 private:
     void setupUi();
     void applyDarkTheme();
     void applyLightTheme();
     void applyTheme(bool dark);
+    void updateAppChrome();
+    void updateAssistantModeIndicator();
     void refreshDiary();
     void refreshStats();
     void refreshTraining();
@@ -87,10 +108,20 @@ private:
     QString trainingFilePath(const QString& profile, const QDate& date) const;
     void loadTrainingFor(const QString& profile, const QDate& date);
     void saveTrainingFor(const QString& profile, const QDate& date);
-    int calculateConsistencyStreak();
+    int calculateConsistencyStreak() const;
     void loadProfileMeta(const QString& profile);
     void saveProfileMeta(const QString& profile) const;
     double estimateCalorieGoalFromProfile() const;
+    void appendAssistantFeedback(const QString& query,
+                                 const QString& response,
+                                 const QString& verdict,
+                                 const QString& comment);
+    int countCompletedTrainingSessionsLast7Days() const;
+    int trainingAdaptationVolume() const;
+    TrainingPreferences buildTrainingPreferences() const;
+
+    /** Паралельне завантаження щоденників (індекс у векторі = індекс у days). */
+    QVector<Diary> loadDiariesForDates(const QVector<QDate>& days) const;
 
     // Data
     FoodDatabase foodDb_;
@@ -133,25 +164,38 @@ private:
     // Templates controls
     QPushButton* saveTemplateBtn_{};
     QPushButton* applyTemplateBtn_{};
+    QPushButton* copyYesterdayBtn_{};
+    QPushButton* repeatLastMealBtn_{};
     QMap<QString, QVector<SavedMeal>> templatesPerMealType_;
 
     // Stats and goals
     QSpinBox* goalSpin_{};
+    QSpinBox* proteinGoalSpin_{};
+    QSpinBox* carbGoalSpin_{};
+    QSpinBox* fatGoalSpin_{};
     QLabel* caloriesLabel_{};
     QLabel* macrosLabel_{};
     QProgressBar* caloriesProgress_{};
+    QProgressBar* macroProteinProgress_{};
+    QProgressBar* macroCarbProgress_{};
+    QProgressBar* macroFatProgress_{};
 
     // Water tracking
     QSpinBox* waterAddSpin_{}; // amount to add
     QPushButton* waterAddBtn_{};
+    QPushButton* waterQuick250Btn_{};
+    QPushButton* waterQuick500Btn_{};
     QSpinBox* waterGoalSpin_{};
     QProgressBar* waterProgress_{};
 
     // Weight
     QDoubleSpinBox* weightSpin_{};
+    QLabel* bmiLabel_{};
 
     // Weekly report
     QPushButton* weeklyReportBtn_{};
+    QPushButton* copyDaySummaryBtn_{};
+    QPushButton* resetMacroDefaultsBtn_{};
 
     // Training (fitness)
     QGroupBox* trainingBox_{};
@@ -163,6 +207,7 @@ private:
     QLineEdit* trainingNotesEdit_{};
     QPushButton* addTrainingBtn_{};
     QPushButton* removeTrainingBtn_{};
+    QPushButton* editTrainingBtn_{};
     QListWidget* trainingsList_{};
     QLabel* trainingSummaryLabel_{};
     QPushButton* generatePlanBtn_{};
@@ -171,8 +216,16 @@ private:
     QPushButton* duplicateTomorrowBtn_{};
     QPushButton* dailyTipBtn_{};
     QPushButton* trainingWeeklyReportBtn_{};
+    QPushButton* exportTrainingCSVBtn_{};
+    QPushButton* exportTrainingPdfBtn_{};
+    QLabel* assistantModeBadge_{};
+    QPushButton* progressOverviewBtn_{};
     QPushButton* startWorkoutBtn_{};
     QPushButton* quickStartWorkoutBtn_{};
+    QPushButton* completeWorkoutBtn_{};
+    QLabel* headerDateLabel_{};
+    bool workoutSessionActive_{false};
+    std::vector<TrainingSession> activeWorkoutPlan_;
     QLabel* fitnessKpiLabel_{};
     QLabel* tipLabel_{};
 

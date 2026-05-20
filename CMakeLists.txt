@@ -3,6 +3,15 @@ project(CalorieCalc)
 
 set(CMAKE_CXX_STANDARD 20)
 
+# SQLite (used by targets and tests)
+find_package(SQLite3 QUIET)
+if(SQLite3_FOUND)
+    add_definitions(-DHAVE_SQLITE3)
+    message(STATUS "SQLite3 found: ${SQLite3_VERSION}")
+else()
+    message(STATUS "SQLite3 not found - SQLite features disabled")
+endif()
+
 # Doxygen
 find_package(Doxygen)
 if(DOXYGEN_FOUND)
@@ -12,9 +21,10 @@ if(DOXYGEN_FOUND)
     add_custom_target(docs
         COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_OUT}
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-        COMMENT "Generating API documentation with Doxygen"
+        COMMENT "Generating API documentation with Doxygen to build/html"
         VERBATIM
     )
+    message(STATUS "Doxygen: run 'cmake --build <build-dir> --target docs' then open build/html/index.html")
 endif()
 
 # Tests and benchmarks (optional)
@@ -40,7 +50,13 @@ if(BUILD_TESTS)
         tests/test_savedmeal.cpp
         tests/test_statistics.cpp
         tests/test_savestrategies.cpp
+        tests/test_training_plan.cpp
         tests/test_csv_import.cpp
+        tests/test_parallel.cpp
+        tests/test_training_json.cpp
+        tests/test_error_handling.cpp
+        tests/test_auth.cpp
+        gui/AuthStore.cpp
         Food.cpp
         Diary.cpp
         SavedMeal.cpp
@@ -49,7 +65,20 @@ if(BUILD_TESTS)
         TextSaveStrategy.cpp
         StatisticsCalculator.cpp
         CsvImportExport.cpp
+        TrainingSession.cpp
+        TrainingPlanGenerator.cpp
+        TrainingSession.cpp
+        TrainingDiary.cpp
+        TrainingJsonSaveStrategy.cpp
+        Parallel.cpp
+        BatchDiaryLoader.cpp
     )
+    find_package(Qt6 COMPONENTS Core QUIET)
+    if(Qt6_FOUND)
+        target_link_libraries(CalorieCalcTests PRIVATE Qt6::Core)
+    else()
+        message(WARNING "Qt6 Core not found — test_training_json.cpp will not link; install Qt6 for full tests")
+    endif()
     if(SQLite3_FOUND)
         target_sources(CalorieCalcTests PRIVATE SqliteSaveStrategy.cpp)
         target_link_libraries(CalorieCalcTests PRIVATE SQLite::SQLite3)
@@ -91,15 +120,6 @@ if(BUILD_BENCHMARKS)
     gtest_discover_tests(CalorieCalcBenchmarkTests)
 endif()
 
-# SQLite
-find_package(SQLite3 QUIET)
-if(SQLite3_FOUND)
-    add_definitions(-DHAVE_SQLITE3)
-    message(STATUS "SQLite3 found: ${SQLite3_VERSION}")
-else()
-    message(STATUS "SQLite3 not found - SQLite features disabled")
-endif()
-
 add_executable(CalorieCalc 
     main.cpp
     Food.cpp
@@ -111,6 +131,8 @@ add_executable(CalorieCalc
     StatisticsCalculator.cpp
     Logger.cpp
     CsvImportExport.cpp
+    Parallel.cpp
+    BatchDiaryLoader.cpp
 )
 if(SQLite3_FOUND)
     target_sources(CalorieCalc PRIVATE SqliteSaveStrategy.cpp)
@@ -120,19 +142,25 @@ endif()
 
 # GUI target (Qt Widgets)
 option(BUILD_GUI "Build Qt GUI" ON)
+option(CALORIECALC_REQUIRE_CHARTS "Require Qt Charts for GUI (fail configure if Charts missing)" OFF)
+option(BUILD_API_SERVER "Build REST API server (Qt HttpServer) for NFR-2 load tests" ON)
+
 if(BUILD_GUI)
     set(CMAKE_AUTOMOC ON)
     set(CMAKE_AUTORCC ON)
     set(CMAKE_AUTOUIC ON)
 
-    # Set CMAKE_PREFIX_PATH to help find Qt
-    set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} /opt/homebrew)
+    list(APPEND CMAKE_PREFIX_PATH
+        /opt/homebrew
+        /opt/homebrew/opt/qt
+        /opt/homebrew/opt/qt@6
+        /opt/homebrew/opt/qtcharts
+    )
     set(USE_QT_CHARTS FALSE)
-    
-    # Try Qt6 first
+    set(QT_MAJOR 6)
+
     find_package(Qt6 COMPONENTS Widgets PrintSupport Network QUIET)
     if(Qt6_FOUND)
-        # Check if Charts is available
         find_package(Qt6 COMPONENTS Charts QUIET)
         if(Qt6Charts_FOUND)
             set(QT_LIB Qt6::Widgets Qt6::PrintSupport Qt6::Network Qt6::Charts)
@@ -140,10 +168,15 @@ if(BUILD_GUI)
             message(STATUS "Using Qt6 with Charts")
         else()
             set(QT_LIB Qt6::Widgets Qt6::PrintSupport Qt6::Network)
-            message(STATUS "Using Qt6 without Charts (install qt-charts for visual graphs)")
+            if(CALORIECALC_REQUIRE_CHARTS)
+                message(FATAL_ERROR
+                    "Qt6 Charts not found. Install Charts (e.g. brew install qtcharts) "
+                    "or set -DCALORIECALC_REQUIRE_CHARTS=OFF")
+            endif()
+            message(WARNING "Qt6 Charts not found — GUI builds without visual charts")
         endif()
     else()
-        # Fallback to Qt5
+        set(QT_MAJOR 5)
         find_package(Qt5 COMPONENTS Widgets PrintSupport Network QUIET)
         if(Qt5_FOUND)
             find_package(Qt5 COMPONENTS Charts QUIET)
@@ -153,7 +186,9 @@ if(BUILD_GUI)
                 message(STATUS "Using Qt5 with Charts")
             else()
                 set(QT_LIB Qt5::Widgets Qt5::PrintSupport Qt5::Network)
-                message(STATUS "Using Qt5 without Charts")
+                if(CALORIECALC_REQUIRE_CHARTS)
+                    message(FATAL_ERROR "Qt5 Charts not found. Install qtcharts or disable CALORIECALC_REQUIRE_CHARTS")
+                endif()
             endif()
         else()
             message(FATAL_ERROR "Qt5 or Qt6 not found. Please install Qt.")
@@ -162,12 +197,26 @@ if(BUILD_GUI)
 
     add_executable(CalorieCalcGUI MACOSX_BUNDLE
         gui/main_gui.cpp
+        gui/AppStyle.cpp
+        gui/AppStyle.h
+        gui/ProfileValidation.cpp
+        gui/ProfileValidation.h
         gui/AuthStore.cpp
         gui/AuthStore.h
         gui/LoginDialog.cpp
         gui/LoginDialog.h
+        gui/LegalDocuments.cpp
+        gui/LegalDocuments.h
+        gui/PerfTrace.cpp
+        gui/PerfTrace.h
         gui/ProfileDialog.cpp
         gui/ProfileDialog.h
+        gui/TrainingPlanWorkflowDialog.cpp
+        gui/TrainingPlanWorkflowDialog.h
+        gui/CloudAssistant.cpp
+        gui/CloudAssistant.h
+        gui/AssistantService.cpp
+        gui/AssistantService.h
         gui/MainWindow.cpp
         gui/MainWindow.h
         Food.cpp
@@ -184,6 +233,8 @@ if(BUILD_GUI)
         TrainingJsonSaveStrategy.cpp
         TrainingPlanGenerator.cpp
         OfflineAssistant.cpp
+        Parallel.cpp
+        BatchDiaryLoader.cpp
     )
     
     if(SQLite3_FOUND)
@@ -192,56 +243,130 @@ if(BUILD_GUI)
         target_include_directories(CalorieCalcGUI PRIVATE ${SQLite3_INCLUDE_DIRS})
     endif()
     
-    # REST API server (optional)
-    option(BUILD_API_SERVER "Build REST API server" OFF)
     if(BUILD_API_SERVER)
-        add_executable(CalorieCalcAPI
-            api/main_api.cpp
-            api/rest_server.cpp
-            Food.cpp
-            FoodDatabase.cpp
-            SavedMeal.cpp
-            Diary.cpp
-            JsonSaveStrategy.cpp
-        )
-        target_link_libraries(CalorieCalcAPI PRIVATE ${QT_LIB})
-        target_include_directories(CalorieCalcAPI PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        if(QT_MAJOR EQUAL 6)
+            find_package(Qt6 COMPONENTS Core Network HttpServer QUIET)
+        else()
+            find_package(Qt5 COMPONENTS Core Network QUIET)
+            set(Qt6HttpServer_FOUND FALSE)
+        endif()
+
+        if(Qt6HttpServer_FOUND)
+            add_executable(CalorieCalcAPI
+                api/main_api.cpp
+                api/rest_server.cpp
+                Food.cpp
+                FoodDatabase.cpp
+                SavedMeal.cpp
+                Diary.cpp
+                JsonSaveStrategy.cpp
+                TrainingSession.cpp
+                TrainingDiary.cpp
+                TrainingJsonSaveStrategy.cpp
+                Parallel.cpp
+            )
+            target_link_libraries(CalorieCalcAPI PRIVATE
+                Qt6::Core Qt6::Network Qt6::HttpServer)
+            target_include_directories(CalorieCalcAPI PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+            message(STATUS "CalorieCalcAPI enabled (Qt HttpServer)")
+        else()
+            message(WARNING "BUILD_API_SERVER=ON but Qt6 HttpServer not found — skip CalorieCalcAPI")
+        endif()
     endif()
     
     target_link_libraries(CalorieCalcGUI PRIVATE ${QT_LIB})
     target_include_directories(CalorieCalcGUI PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    
-    # Add QT_CHARTS_LIB definition if Charts is available
+
     if(USE_QT_CHARTS)
         target_compile_definitions(CalorieCalcGUI PRIVATE QT_CHARTS_LIB)
     endif()
-    
-    # i18n: Qt translations (optional, requires lrelease)
-    if(QT_VERSION_MAJOR VERSION_GREATER_EQUAL 6)
-        find_program(LRELEASE_EXECUTABLE lrelease HINTS ${Qt6_DIR}/../../../bin)
-        if(LRELEASE_EXECUTABLE)
-            qt_add_translations(CalorieCalcGUI TS_FILES translations/caloriecounter_uk.ts)
+
+    # i18n (українська)
+    set(TS_FILE ${CMAKE_CURRENT_SOURCE_DIR}/translations/caloriecounter_uk.ts)
+    if(QT_MAJOR EQUAL 6)
+        find_package(Qt6 COMPONENTS LinguistTools QUIET)
+        if(Qt6LinguistTools_FOUND)
+            qt_add_translations(CalorieCalcGUI TS_FILES ${TS_FILE})
+        else()
+            find_program(LRELEASE_EXECUTABLE lrelease)
+            if(LRELEASE_EXECUTABLE)
+                set(QM_FILE ${CMAKE_CURRENT_BINARY_DIR}/caloriecounter_uk.qm)
+                add_custom_command(OUTPUT ${QM_FILE}
+                    COMMAND ${LRELEASE_EXECUTABLE} ${TS_FILE} -qm ${QM_FILE}
+                    DEPENDS ${TS_FILE}
+                    COMMENT "Generating caloriecounter_uk.qm")
+                target_sources(CalorieCalcGUI PRIVATE ${QM_FILE})
+            endif()
         endif()
-    else()
-        find_program(LRELEASE_EXECUTABLE lrelease HINTS ${Qt5_DIR}/../../../bin)
-        if(LRELEASE_EXECUTABLE)
-            set(TS_FILE ${CMAKE_CURRENT_SOURCE_DIR}/translations/caloriecounter_uk.ts)
-            set(QM_FILE ${CMAKE_CURRENT_BINARY_DIR}/caloriecounter_uk.qm)
-            add_custom_command(OUTPUT ${QM_FILE}
-                COMMAND ${LRELEASE_EXECUTABLE} ${TS_FILE} -qm ${QM_FILE}
-                DEPENDS ${TS_FILE}
-                COMMENT "Generating translation file")
-            add_custom_target(translations ALL DEPENDS ${QM_FILE})
-        endif()
+    endif()
+
+    find_program(LUPDATE_EXECUTABLE lupdate)
+    if(LUPDATE_EXECUTABLE)
+        add_custom_target(update_translations
+            COMMAND ${LUPDATE_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/gui/MainWindow.cpp
+                ${CMAKE_SOURCE_DIR}/gui/LoginDialog.cpp
+                ${CMAKE_SOURCE_DIR}/gui/ProfileDialog.cpp
+                ${CMAKE_SOURCE_DIR}/gui/TrainingPlanWorkflowDialog.cpp
+                ${CMAKE_SOURCE_DIR}/gui/ProfileValidation.cpp
+                -ts ${TS_FILE}
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            COMMENT "Update translations/caloriecounter_uk.ts from sources")
     endif()
 
     # macOS bundle settings
     if(APPLE)
-        set_source_files_properties(mac/Info.plist PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+        # Не ставте MACOSX_PACKAGE_LOCATION для цього plist — інакше він потрапляє в Resources/,
+        # а macdeployqt шукає Contents/Info.plist і bundle «ламається».
         set_target_properties(CalorieCalcGUI PROPERTIES
-            OUTPUT_NAME "calorie counter"
+            OUTPUT_NAME "CalorieCalc"
             MACOSX_BUNDLE TRUE
             MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist"
+            MACOSX_RPATH ON
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "@executable_path/../Frameworks"
         )
+        # macdeployqt викликає install_name_tool на exe: потрібен запас __LINKEDIT і сумісний Mach-O.
+        # -no_fixup_chains: Xcode 13+ за замовчуванням «chained fixups» — класичний install_name_tool часто падає
+        #   з «link edit information does not fill the __LINKEDIT segment» на arm64.
+        # APPEND_STRING LINK_FLAGS: стійко до Ninja/Qt поруч із -Wl,-headerpad_max_install_names.
+        set_property(TARGET CalorieCalcGUI APPEND_STRING PROPERTY LINK_FLAGS
+            " -Wl,-headerpad,0x10000000 -Wl,-no_fixup_chains")
+
+        # Без macdeployqt CLion запускає .app з Qt з Homebrew → CODESIGNING crash на libqcocoa.
+        option(CALORIECALC_MAC_DEPLOY "Run macdeployqt + ad-hoc codesign after GUI build (macOS)" ON)
+        if(CALORIECALC_MAC_DEPLOY)
+            if(QT_MAJOR EQUAL 6)
+                find_program(MACDEPLOYQT_EXECUTABLE macdeployqt6
+                    HINTS /opt/homebrew/bin /usr/local/bin)
+            else()
+                find_program(MACDEPLOYQT_EXECUTABLE macdeployqt
+                    HINTS /opt/homebrew/bin /usr/local/bin)
+            endif()
+            find_program(CODESIGN_EXECUTABLE codesign)
+
+            if(MACDEPLOYQT_EXECUTABLE)
+                set(_DEPLOY_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/deploy_macos.sh")
+                # Після лінку лише підпис (швидко). Повний macdeployqt — target deploy_gui (надійніше).
+                add_custom_command(TARGET CalorieCalcGUI POST_BUILD
+                    COMMAND bash "${_DEPLOY_SCRIPT}" --sign-only "$<TARGET_FILE:CalorieCalcGUI>"
+                    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                    COMMENT "macOS: codesign CalorieCalc.app (incremental)"
+                )
+                add_custom_target(deploy_gui
+                    COMMAND bash "${_DEPLOY_SCRIPT}" "$<TARGET_FILE:CalorieCalcGUI>"
+                    DEPENDS CalorieCalcGUI
+                    COMMENT "Re-run macdeployqt on CalorieCalc.app"
+                )
+                add_custom_target(reset_gui_dev
+                    COMMAND bash "${_DEPLOY_SCRIPT}" --reset-dev "$<TARGET_FILE:CalorieCalcGUI>"
+                    COMMENT "Remove bundled Qt; next CalorieCalcGUI build uses Homebrew (CLion dev)"
+                )
+                message(STATUS "macOS: post-build deploy via ${_DEPLOY_SCRIPT}")
+            else()
+                message(WARNING "macdeployqt not found — install Qt (brew install qt). "
+                    "GUI may crash on launch from CLion with CODESIGNING Invalid Page.")
+            endif()
+        endif()
     endif()
 endif()

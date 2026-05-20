@@ -15,15 +15,17 @@ Logger& Logger::getInstance() {
 }
 
 void Logger::init(const std::string& filename, size_t maxFileSize, size_t maxFiles) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (initialized_) {
-        logFile_.close();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (initialized_) {
+            logFile_.close();
+        }
+        logFilename_ = filename;
+        maxFileSize_ = maxFileSize;
+        maxFiles_ = maxFiles;
+        logFile_.open(filename, std::ios::app);
+        initialized_ = true;
     }
-    logFilename_ = filename;
-    maxFileSize_ = maxFileSize;
-    maxFiles_ = maxFiles;
-    logFile_.open(filename, std::ios::app);
-    initialized_ = true;
     log(Level::INFO, "Logger initialized");
 }
 

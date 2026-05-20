@@ -5,6 +5,36 @@
 #include <sqlite3.h>
 #include <iostream>
 #include <sstream>
+#include <cstring>
+
+static bool diaryColumnExists(sqlite3* db, const char* columnName) {
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, "PRAGMA table_info(diary)", -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+    bool found = false;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        if (name && std::strcmp(name, columnName) == 0) {
+            found = true;
+            break;
+        }
+    }
+    sqlite3_finalize(stmt);
+    return found;
+}
+
+static void ensureDiaryMacroColumns(sqlite3* db) {
+    if (!diaryColumnExists(db, "protein_goal_g")) {
+        sqlite3_exec(db, "ALTER TABLE diary ADD COLUMN protein_goal_g REAL DEFAULT 150", nullptr, nullptr, nullptr);
+    }
+    if (!diaryColumnExists(db, "carb_goal_g")) {
+        sqlite3_exec(db, "ALTER TABLE diary ADD COLUMN carb_goal_g REAL DEFAULT 250", nullptr, nullptr, nullptr);
+    }
+    if (!diaryColumnExists(db, "fat_goal_g")) {
+        sqlite3_exec(db, "ALTER TABLE diary ADD COLUMN fat_goal_g REAL DEFAULT 70", nullptr, nullptr, nullptr);
+    }
+}
 
 SqliteSaveStrategy::SqliteSaveStrategy() {
 }
@@ -50,6 +80,8 @@ bool SqliteSaveStrategy::createTables(const std::string& dbPath) const {
         return false;
     }
 
+    ensureDiaryMacroColumns(db);
+
     sqlite3_close(db);
     return true;
 }
@@ -66,6 +98,8 @@ bool SqliteSaveStrategy::save(const Diary& diary, const std::string& filename) c
         return false;
     }
 
+    ensureDiaryMacroColumns(db);
+
     sqlite3_exec(db, "BEGIN TRANSACTION", nullptr, nullptr, nullptr);
 
     // Delete existing data for this date
@@ -81,14 +115,17 @@ bool SqliteSaveStrategy::save(const Diary& diary, const std::string& filename) c
     sqlite3_finalize(stmt);
 
     // Insert diary
-    sqlite3_prepare_v2(db, 
-        "INSERT INTO diary (date, calorie_goal, water_ml, water_goal_ml, weight_kg) VALUES (?, ?, ?, ?, ?)",
+    sqlite3_prepare_v2(db,
+        "INSERT INTO diary (date, calorie_goal, water_ml, water_goal_ml, weight_kg, protein_goal_g, carb_goal_g, fat_goal_g) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         -1, &stmt, nullptr);
     sqlite3_bind_text(stmt, 1, filename.c_str(), -1, SQLITE_STATIC);
     sqlite3_bind_double(stmt, 2, diary.getCalorieGoal());
     sqlite3_bind_int(stmt, 3, diary.getWaterMl());
     sqlite3_bind_int(stmt, 4, diary.getWaterGoalMl());
     sqlite3_bind_double(stmt, 5, diary.getWeightKg());
+    sqlite3_bind_double(stmt, 6, diary.getProteinGoalG());
+    sqlite3_bind_double(stmt, 7, diary.getCarbGoalG());
+    sqlite3_bind_double(stmt, 8, diary.getFatGoalG());
     sqlite3_step(stmt);
     sqlite3_int64 diaryId = sqlite3_last_insert_rowid(db);
     sqlite3_finalize(stmt);
@@ -125,9 +162,13 @@ bool SqliteSaveStrategy::load(Diary& diary, const std::string& filename) const {
         return false;
     }
 
+    ensureDiaryMacroColumns(db);
+
     // Load diary
     sqlite3_stmt* stmt;
-    sqlite3_prepare_v2(db, "SELECT calorie_goal, water_ml, water_goal_ml, weight_kg, id FROM diary WHERE date = ?", -1, &stmt, nullptr);
+    sqlite3_prepare_v2(db,
+        "SELECT calorie_goal, water_ml, water_goal_ml, weight_kg, protein_goal_g, carb_goal_g, fat_goal_g, id FROM diary WHERE date = ?",
+        -1, &stmt, nullptr);
     sqlite3_bind_text(stmt, 1, filename.c_str(), -1, SQLITE_STATIC);
     
     if (sqlite3_step(stmt) != SQLITE_ROW) {
@@ -140,13 +181,28 @@ bool SqliteSaveStrategy::load(Diary& diary, const std::string& filename) const {
     int water = sqlite3_column_int(stmt, 1);
     int waterGoal = sqlite3_column_int(stmt, 2);
     double weight = sqlite3_column_double(stmt, 3);
-    sqlite3_int64 diaryId = sqlite3_column_int64(stmt, 4);
+    double proteinGoal = 150.0;
+    if (sqlite3_column_type(stmt, 4) != SQLITE_NULL) {
+        proteinGoal = sqlite3_column_double(stmt, 4);
+    }
+    double carbGoal = 250.0;
+    if (sqlite3_column_type(stmt, 5) != SQLITE_NULL) {
+        carbGoal = sqlite3_column_double(stmt, 5);
+    }
+    double fatGoal = 70.0;
+    if (sqlite3_column_type(stmt, 6) != SQLITE_NULL) {
+        fatGoal = sqlite3_column_double(stmt, 6);
+    }
+    sqlite3_int64 diaryId = sqlite3_column_int64(stmt, 7);
     
     diary.clear();
     diary.setCalorieGoal(goal);
     diary.addWater(water);
     diary.setWaterGoal(waterGoal);
     diary.setWeightKg(weight);
+    diary.setProteinGoalG(proteinGoal);
+    diary.setCarbGoalG(carbGoal);
+    diary.setFatGoalG(fatGoal);
     
     sqlite3_finalize(stmt);
 
